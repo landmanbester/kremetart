@@ -1,5 +1,5 @@
 cabs:
-  stream-msv4:
+  stream_msv4:
     flavour: python
     command: kremetart.core.stream_msv4.stream_msv4
     name: stream-msv4
@@ -8,11 +8,17 @@ cabs:
     image: ghcr.io/landmanbester/kremetart:setup
     inputs:
       ms:
-        type: Directory
         info:
           Input data source
+        dtype: Optional[str]
+        type: Directory
+      output-dataset:
+        info:
+          Output Zarr dataset
+        dtype: Optional[str]
+        type: Directory
     outputs:
       output_dataset:
-        type: Directory
+        dtype: File
         info:
           Output Zarr dataset
