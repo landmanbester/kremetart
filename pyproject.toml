@@ -14,9 +14,10 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "hip-cargo>=0.2.0",
+    "hip-cargo>=0.2.1",
 ]
 
 # Lightweight install (default):  pip install kremetart
@@ -28,7 +29,13 @@ dependencies = [
 #     Adds the heavy runtime deps that core/ implementations need to execute
 #     natively. Add new deps to the "full" extra below as you grow core/.
 [project.optional-dependencies]
-full = []
+full = [
+    "numpy>=2.0.0",
+    "scipy>=1.15.0",
+    "xarray>=2025.0",
+    "zarr>=2.18.3",
+    "holoscan-cu13>=4.3.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/landmanbester/kremetart"
@@ -50,7 +57,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
-ignore = []
+ignore = ["N802", "N803", "N812"]
 
 [tool.ruff.format]
 quote-style = "double"
