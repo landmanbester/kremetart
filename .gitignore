@@ -46,3 +46,12 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# latex
+*.aux
+*.log
+*.out
+*.toc
+*.fdb_latexmk
+*.fls
+*.synctex.gz

@@ -1,0 +1,55 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\newtheorem{remark}{Remark}
+\newtheorem{proposition}{Proposition}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\tr}{tr}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Norm}{\mathcal{N}}
+\newcommand{\T}{^{\mathsf{T}}}
+\newcommand{\given}{\,|\,}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\half}{\tfrac{1}{2}}
+
+\title{On the fly calibration and imaging of streamed TART data}
+\author{Landman Bester}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note develops the calibration and imaging machinery underpinning the proposed transient detector software pipeline. The actual detection heuristics are derived in an accompanying document. Since the heuristics apply to calibrated residual images, on-the-fly calibration and model subtraction are a necessary precursors for the detection pipeline. The calibration parameters (including calibrator satellite model fluxes) are assumed to be driven by independent integrated Wiener processes (IWPs) (see accompanying document for notation and theory relating to IWPs). Thus, each antenna requires an IWP (likely with different driving noise) for its log-amplitude and phase and each calibrator source requires an IWP for its log-amplitude. Since the calibrator satellite catalogue will almost always be incomplete a robust heavy tailed likelihood is required to prevent outliers from dominating inference. The IWP state-space model and the heavy-tailed likelihood are combined in a Rao--Blackwellised particle filter, which is used to track the calibration parameters and subtract the calibrator sources from the data. The resulting residual image stream can then fed into the detection pipeline.
+\end{abstract}
+
+\section{Overview of the imaging and calibration problem}
+
+The task is to transform the raw uncalibrated visibilities $V_{pq,t}(\bm{b})$ into calibrated residual images $I_{t}(\bm{l})$ in real time, where $p,q$ index the antennas, $t$ the time, $\bm{b}$ the baseline vector, and $\bm{l}$ the direction on the sky. Because real-time streaming is required, calibration and calibrator source flux estimation needs to happen simultaneously (it is only the calibrator positions which are known a-priori and these are not always 100\% accurate). The streaming nature of the problem makes holoscan a natural fit for the software implementation, with jax serving as the numerical backend for the inference machinery.
+
+We assume a measurement model of the form
+\begin{equation}
+  V_{pq,t}(\bm{b}) = \exp\left(a_p(t) + \imath \psi_p(t)\right) \left( \sum_s A_s(t) X_{pq,ts} \right) \exp\left(a_q(t) - \imath \psi_p(t)\right),
+\end{equation}
+where the scalar gain log-amplitudes $a_{p/q}$ are slowly varying real functions of time, the gain phases $\psi_{p/q}$ are more quickly varying real functions of time, the calibrator source fluxes $A_s$ are slowly varying real functions of time, and $X_{pq,ts}$ is the known unit coherencies of source $s$ to the visibility on baseline $pq$ at time $t$. The TART telescope always points at zenith and sees almost the whole hemisphere it is located in. This makes spherical coordinates the natural choice for the image domain and the calibrator source positions. The residual images should be computed on a Healpix grid.
+
+Note that calibrator sources are mostly satellites in geostationary orbit, which are bright and have well-known positions but whose fluxes can vary on time-scales of minutes to hours. The gain log-amplitudes and phases are driven by independent integrated Wiener processes (IWPs) with different driving noise levels. The calibrator source fluxes are also driven by independent IWPs, but with much smaller driving noise levels than the gain parameters. Since the calibrator satellite catalogue is almost always incomplete, a robust heavy-tailed likelihood is required to prevent outliers from dominating inference. The IWP state-space model and the heavy-tailed likelihood are combined in a Rao--Blackwellised particle filter, which is used to track the calibration parameters and subtract the calibrator sources from the data. The resulting residual image stream can then be fed into the detection pipeline.
+
+This is just the initial idea. This document exists so that we can iterate over some ideas on the best way to implement this.
+
+\begin{thebibliography}{99}
+\small
+
+\end{thebibliography}
+
+\end{document}
