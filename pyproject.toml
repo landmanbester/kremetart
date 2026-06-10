@@ -35,6 +35,9 @@ full = [
     "xarray>=2025.0",
     "zarr>=2.18.3",
     "holoscan-cu13>=4.3.0",
+    "tart-tools>=1.4.5",
+    "tart[all]>=1.4.5",
+    "netcdf4",
 ]
 
 [project.urls]
@@ -85,6 +88,7 @@ dev = [
     "ruff>=0.9.0",
     "tbump>=6.11.0",
     "pre-commit>=4.0.0",
+    "ipdb",
 ]
 test = [
     "pytest>=8.0.0",
