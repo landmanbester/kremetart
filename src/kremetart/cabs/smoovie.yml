@@ -1,0 +1,33 @@
+cabs:
+  smoovie:
+    flavour: python
+    command: kremetart.core.smoovie.smoovie
+    name: smoovie
+    info:
+      Render a TART HDF sequence into a HEALPix all-sky movie.
+    image: ghcr.io/landmanbester/kremetart:latest
+    inputs:
+      hdf-dir:
+        info:
+          Directory of input TART HDF snapshots
+        dtype: Optional[str]
+        type: Directory
+      nside:
+        info:
+          HEALPix nside resolution.
+        dtype: int
+        default: 128
+      fps:
+        info:
+          Frames per second.
+        dtype: int
+        default: 2
+      cmap:
+        info:
+          Matplotlib colormap.
+        default: inferno
+    outputs:
+      movie:
+        dtype: File
+        info:
+          Output mp4 movie
