@@ -3,7 +3,13 @@
 import numpy as np
 import pytest
 
-from kremetart.utils.healpix_dft import dft_adjoint, dft_forward, dirty_map, make_pixel_grid
+from kremetart.utils.healpix_dft import (
+    dft_adjoint,
+    dft_forward,
+    dirty_map,
+    equatorial_baselines,
+    make_pixel_grid,
+)
 
 LIGHTSPEED = 299792458.0
 
@@ -72,3 +78,30 @@ def test_dirty_map_recovers_point_source():
     assert dmap.dtype == np.float64
     assert int(np.argmax(dmap)) == src
     np.testing.assert_allclose(dmap[src], 1.0, atol=1e-12)
+
+
+def test_equatorial_baselines_matches_itrs_unit_vectors():
+    """b_rot . s_icrs equals b_itrs . s_itrs(t) from the tested rephasing machinery."""
+    pytest.importorskip("astropy")
+    from kremetart.utils.rephasing import _itrs_unit_vectors
+
+    rng = np.random.default_rng(3)
+    itrs_bl = rng.standard_normal((7, 3)) * 3.0
+    times = np.array([1.6e9, 1.6e9 + 600.0, 1.6e9 + 3600.0])
+    ra, dec = 1.2, -0.35
+    s_icrs = np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+
+    b_rot = equatorial_baselines(itrs_bl, times, backend="astropy", xp=np)  # (n_time, nbl, 3)
+    delay_imager = b_rot @ s_icrs  # (n_time, nbl)
+    s_itrs = _itrs_unit_vectors(ra, dec, times)  # (n_time, 3)
+    delay_ref = np.einsum("bi,ti->tb", itrs_bl, s_itrs)
+    # The imager's C(t) is a pure Earth-orientation rotation, so it reproduces the full astropy
+    # ICRS->ITRS source transform up to stellar aberration (the non-rotational ICRS<->GCRS part,
+    # ~20 arcsec): a delay residual ~3e-4 of the baseline length, hundreds of times below the
+    # ~0.9 deg HEALPix pixel. A real bug (wrong axis/transpose/sign) would be O(baseline) metres.
+    np.testing.assert_allclose(delay_imager, delay_ref, rtol=3e-3, atol=1e-3)
+
+
+def test_equatorial_baselines_native_not_implemented():
+    with pytest.raises(NotImplementedError):
+        equatorial_baselines(np.zeros((2, 3)), np.array([1.6e9]), backend="native")

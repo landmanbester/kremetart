@@ -98,3 +98,52 @@ def dirty_map(vis, weights, baselines, pix_vec, freqs, *, xp: ModuleType = np):
     weights = xp.asarray(weights)
     img = dft_adjoint(weights * vis, baselines, pix_vec, freqs, xp=xp)
     return img.real / weights.sum()
+
+
+def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
+    """Per-timestamp ICRS->ITRS rotation matrices R(t), shape (n_time, 3, 3) (host, O(n_time)).
+
+    Column ``i`` of ``R(t)`` is the ITRS image of the ``i``-th ICRS axis, so
+    ``s_itrs(t) = R(t) @ s_icrs``. The axes are transformed as unit-sphere directions (no distance)
+    via the same astropy path as :func:`kremetart.utils.rephasing._itrs_unit_vectors`, folding in
+    frame bias, precession, nutation and Earth rotation.
+
+    This is a *pure rotation* (the design's ``C(t)`` = latitude tilt then rotation about the polar
+    axis by LST). It therefore reproduces the full ICRS->ITRS source transform only up to stellar
+    aberration -- the non-rotational ICRS<->GCRS term (~20 arcsec) cannot be captured by any single
+    matrix -- which is negligible against the ~0.9 deg HEALPix pixel.
+    """
+    import astropy.units as u
+    from astropy.coordinates import ICRS, ITRS, UnitSphericalRepresentation
+    from astropy.time import Time
+
+    tt = Time(np.asarray(times), format="unix", scale="utc")
+    # The three ICRS axes (+x, +y, +z) as directions at infinity.
+    axes = ICRS(UnitSphericalRepresentation(lon=[0.0, 90.0, 0.0] * u.deg, lat=[0.0, 0.0, 90.0] * u.deg))
+    mats = np.empty((tt.size, 3, 3), dtype=np.float64)
+    for k in range(tt.size):
+        itrs = axes.transform_to(ITRS(obstime=tt[k]))
+        mats[k] = itrs.cartesian.xyz.value  # (component, axis) -> columns of R(t)
+    return mats
+
+
+def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp: ModuleType = np):
+    """Rotate fixed ITRS baselines into the equatorial frame for each timestamp.
+
+    Args:
+        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (e.g. from rephasing's ``_itrs_baselines``).
+        times: ``(n_time,)`` unix-second timestamps.
+        backend: ``"astropy"`` (the oracle, host-side) or ``"native"`` (GPU polynomial; later phase).
+        xp: Array module for the returned array.
+
+    Returns:
+        ``(n_time, nbl, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
+    """
+    if backend == "astropy":
+        b = np.asarray(itrs_baselines)
+        rot = _icrs_to_itrs_matrices(times)  # (n_time, 3, 3)
+        b_rot = np.einsum("bi,tik->tbk", b, rot)  # b_itrs @ R(t)
+        return xp.asarray(b_rot)
+    if backend == "native":
+        raise NotImplementedError("GPU-native C(t) backend is a later phase; use backend='astropy'.")
+    raise ValueError(f"unknown backend {backend!r}")
