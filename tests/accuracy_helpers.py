@@ -113,17 +113,26 @@ def angular_offset(a, b) -> float:
     return float(np.arccos(np.clip(a @ b, -1.0, 1.0)))
 
 
-def recovered_direction_and_flux(dmap, pix_vec, nside, *, nest: bool = True):
+def recovered_direction_and_flux(dmap, pix_vec, nside, *, nest: bool = True, near=None, search_radius_deg=None):
     """Flux-weighted centroid direction (unit vector) and peak flux (Jy) of a dirty map.
 
     Centroids the positive pixels within ~2.5 pixel-radii of the peak so a sub-pixel source is
     localised below the pixel scale.
+
+    A coplanar array (TART has Up == 0) gives a dirty map that is mirror-symmetric about the array
+    plane -- every source has an equal-amplitude reflection below the horizon. For a *known* injected
+    source, pass ``near`` (a unit vector) and ``search_radius_deg`` to restrict the peak search to
+    that hemisphere/neighbourhood, removing the mirror ambiguity.
     """
     import healpy as hp
 
     dmap = np.asarray(dmap)
     pix_vec = np.asarray(pix_vec)
-    peak = int(np.argmax(dmap))
+    if near is not None and search_radius_deg is not None:
+        disc0 = hp.query_disc(nside, np.asarray(near, dtype=np.float64), np.radians(search_radius_deg), nest=nest)
+        peak = int(disc0[np.argmax(dmap[disc0])])
+    else:
+        peak = int(np.argmax(dmap))
     disc = hp.query_disc(nside, pix_vec[peak], 2.5 * hp.nside2resol(nside), nest=nest)
     w = np.clip(dmap[disc], 0.0, None)
     centroid = (w[:, None] * pix_vec[disc]).sum(axis=0)

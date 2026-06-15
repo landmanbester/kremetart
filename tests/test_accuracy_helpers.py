@@ -94,6 +94,21 @@ def test_recovered_direction_and_flux_single_hot_pixel():
     np.testing.assert_allclose(vec, pix[src], atol=1e-12)
 
 
+def test_recovered_direction_near_resolves_mirror():
+    """With two equal peaks (source + its antipode), `near` selects the requested hemisphere."""
+    from kremetart.utils.healpix_dft import make_pixel_grid
+
+    nside = 16
+    pix = make_pixel_grid(nside, xp=np)
+    src = 300
+    mirror = int(np.argmin(pix @ pix[src]))  # most antipodal pixel
+    dmap = np.zeros(pix.shape[0])
+    dmap[src] = 5.0
+    dmap[mirror] = 5.0
+    vec, _ = recovered_direction_and_flux(dmap, pix, nside, near=pix[src], search_radius_deg=10.0)
+    np.testing.assert_allclose(vec, pix[src], atol=1e-12)
+
+
 def test_analytic_offset_recovers_known_shift():
     """A baseline set whose extra delay equals b_rec.delta is predicted to shift by |delta|."""
     rng = np.random.default_rng(9)
