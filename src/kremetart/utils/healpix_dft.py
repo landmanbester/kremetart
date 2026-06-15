@@ -36,3 +36,46 @@ def make_pixel_grid(nside: int, *, nest: bool = True, xp: ModuleType = np):
     vec = hp.pix2vec(nside, np.arange(npix), nest=nest)  # tuple of three (npix,) arrays
     grid = np.stack(vec, axis=1).astype(np.float64)  # (npix, 3)
     return xp.asarray(grid)
+
+
+def _delay(baselines, pix_vec):
+    """Geometric delay matrix b . s in metres, shape (nrow, npix)."""
+    return baselines @ pix_vec.T
+
+
+def _phase(baselines, pix_vec, freqs, xp):
+    """2*pi*(nu/c)*(b . s), shape (nrow, nchan, npix)."""
+    g = _delay(baselines, pix_vec)  # (nrow, npix)
+    inv_wl = xp.asarray(freqs) / LIGHTSPEED  # (nchan,) cycles per metre
+    return 2.0 * xp.pi * inv_wl[None, :, None] * g[:, None, :]
+
+
+def dft_forward(image, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+    """Image -> visibilities (phasesign +1).
+
+    Args:
+        image: ``(npix,)`` sky (real in production; complex accepted for the adjoint test).
+        baselines: ``(nrow, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
+        pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
+        freqs: ``(nchan,)`` frequencies in Hz.
+        xp: Array module.
+
+    Returns:
+        ``(nrow, nchan)`` complex visibilities.
+    """
+    kernel = xp.exp(1j * _phase(baselines, pix_vec, freqs, xp))  # (nrow, nchan, npix)
+    return kernel @ xp.asarray(image)  # (nrow, nchan)
+
+
+def dft_adjoint(vis, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+    """Visibilities -> image (phasesign -1); the exact Hermitian transpose of :func:`dft_forward`.
+
+    Args:
+        vis: ``(nrow, nchan)`` complex visibilities.
+        baselines, pix_vec, freqs, xp: as in :func:`dft_forward`.
+
+    Returns:
+        ``(npix,)`` complex image (caller takes ``Re`` / normalises; see :func:`dirty_map`).
+    """
+    kernel = xp.exp(-1j * _phase(baselines, pix_vec, freqs, xp))  # conj of forward
+    return xp.einsum("rcj,rc->j", kernel, xp.asarray(vis))  # (npix,)

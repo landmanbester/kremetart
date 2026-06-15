@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from kremetart.utils.healpix_dft import make_pixel_grid
+from kremetart.utils.healpix_dft import dft_adjoint, dft_forward, make_pixel_grid
 
 LIGHTSPEED = 299792458.0
 
@@ -21,3 +21,34 @@ def test_make_pixel_grid_nested_matches_healpy():
     pix = make_pixel_grid(nside, xp=np)  # nest=True default
     expected = np.stack(hp.pix2vec(nside, np.arange(hp.nside2npix(nside)), nest=True), axis=1)
     np.testing.assert_allclose(pix, expected, atol=1e-12)
+
+
+def test_forward_matches_explicit_fringe():
+    """forward of a single-pixel source is the geometric fringe on every row/channel."""
+    rng = np.random.default_rng(1)
+    pix = make_pixel_grid(4, xp=np)
+    npix = pix.shape[0]
+    baselines = rng.standard_normal((5, 3))
+    freqs = np.array([1.40e9, 1.575e9])
+    image = np.zeros(npix)
+    image[3] = 2.0
+    vis = dft_forward(image, baselines, pix, freqs, xp=np)
+    assert vis.shape == (5, 2)
+    g = baselines @ pix[3]  # (nrow,)
+    expected = 2.0 * np.exp(2j * np.pi * (freqs[None, :] / LIGHTSPEED) * g[:, None])
+    np.testing.assert_allclose(vis, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_forward_adjoint_are_hermitian_transposes():
+    """<forward(image), data> == <image, adjoint(data)>  (the adjointness dot-product test)."""
+    rng = np.random.default_rng(0)
+    pix = make_pixel_grid(8, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 12, 3
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.40e9, 1.50e9, 1.575e9])
+    image = rng.standard_normal(npix) + 1j * rng.standard_normal(npix)
+    data = rng.standard_normal((nrow, nchan)) + 1j * rng.standard_normal((nrow, nchan))
+    lhs = np.vdot(dft_forward(image, baselines, pix, freqs, xp=np), data)
+    rhs = np.vdot(image, dft_adjoint(data, baselines, pix, freqs, xp=np))
+    np.testing.assert_allclose(lhs, rhs, rtol=1e-10, atol=1e-10)
