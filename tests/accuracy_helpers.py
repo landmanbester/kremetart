@@ -104,3 +104,48 @@ def simulate_visibilities(fluxes, svec, ecef_baselines, times, freqs, *, xp: Mod
     for t in range(nt):
         vis[t] = dft_forward(fluxes, b_rot[t], svec, freqs, xp=xp)
     return vis
+
+
+def angular_offset(a, b) -> float:
+    """Angle (radians) between two unit vectors."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    return float(np.arccos(np.clip(a @ b, -1.0, 1.0)))
+
+
+def recovered_direction_and_flux(dmap, pix_vec, nside, *, nest: bool = True):
+    """Flux-weighted centroid direction (unit vector) and peak flux (Jy) of a dirty map.
+
+    Centroids the positive pixels within ~2.5 pixel-radii of the peak so a sub-pixel source is
+    localised below the pixel scale.
+    """
+    import healpy as hp
+
+    dmap = np.asarray(dmap)
+    pix_vec = np.asarray(pix_vec)
+    peak = int(np.argmax(dmap))
+    disc = hp.query_disc(nside, pix_vec[peak], 2.5 * hp.nside2resol(nside), nest=nest)
+    w = np.clip(dmap[disc], 0.0, None)
+    centroid = (w[:, None] * pix_vec[disc]).sum(axis=0)
+    centroid /= np.linalg.norm(centroid)
+    return centroid, float(dmap[peak])
+
+
+def analytic_offset(b_rec, b_truth, svec) -> float:
+    """Predicted peak offset (radians) when imaging truth data with b_rec instead of b_truth.
+
+    Least-squares stationary-phase: solve for the tangent-plane shift delta minimising
+    || (b_truth - b_rec).s - b_rec.delta ||. ``b_rec``/``b_truth`` are the (nbl,3) rotated baselines.
+    """
+    s = np.asarray(svec, dtype=np.float64)
+    s = s / np.linalg.norm(s)
+    e1 = np.cross(s, np.array([0.0, 0.0, 1.0]))
+    if np.linalg.norm(e1) < 1e-8:
+        e1 = np.cross(s, np.array([1.0, 0.0, 0.0]))
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(s, e1)
+    b_rec = np.asarray(b_rec, dtype=np.float64)
+    extra = (np.asarray(b_truth, dtype=np.float64) - b_rec) @ s  # (nbl,)
+    design = np.stack([b_rec @ e1, b_rec @ e2], axis=1)  # (nbl, 2)
+    coef, *_ = np.linalg.lstsq(design, extra, rcond=None)
+    return float(np.hypot(coef[0], coef[1]))

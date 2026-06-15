@@ -6,8 +6,11 @@ import pytest
 pyproj = pytest.importorskip("pyproj")
 
 from tests.accuracy_helpers import (  # noqa: E402  (after importorskip)
+    analytic_offset,
+    angular_offset,
     baselines_from_positions,
     enu_to_ecef_truth,
+    recovered_direction_and_flux,
     simulate_visibilities,
     source_svec,
     sources_spanning_zenith,
@@ -71,3 +74,37 @@ def test_simulate_visibilities_point_source_amplitude():
     )
     assert vis.shape == (1, 10, 1)
     np.testing.assert_allclose(np.abs(vis), 4.0, atol=1e-9)
+
+
+def test_angular_offset_basic():
+    assert abs(angular_offset([1, 0, 0], [1, 0, 0])) < 1e-12
+    np.testing.assert_allclose(angular_offset([1, 0, 0], [0, 1, 0]), np.pi / 2, atol=1e-12)
+
+
+def test_recovered_direction_and_flux_single_hot_pixel():
+    from kremetart.utils.healpix_dft import make_pixel_grid
+
+    nside = 16
+    pix = make_pixel_grid(nside, xp=np)
+    dmap = np.zeros(pix.shape[0])
+    src = 300
+    dmap[src] = 5.0
+    vec, flux = recovered_direction_and_flux(dmap, pix, nside)
+    assert flux == 5.0
+    np.testing.assert_allclose(vec, pix[src], atol=1e-12)
+
+
+def test_analytic_offset_recovers_known_shift():
+    """A baseline set whose extra delay equals b_rec.delta is predicted to shift by |delta|."""
+    rng = np.random.default_rng(9)
+    b_rec = rng.standard_normal((30, 3)) * 2.0
+    s = source_svec([0.7], [-0.4])[0]
+    z = np.array([0.0, 0.0, 1.0])
+    e1 = np.cross(s, z)
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(s, e1)
+    delta = 1e-4 * e1 - 2e-4 * e2  # radians
+    extra = b_rec @ delta
+    b_truth = b_rec + extra[:, None] * s  # so (b_truth - b_rec).s == extra
+    got = analytic_offset(b_rec, b_truth, s)
+    np.testing.assert_allclose(got, np.linalg.norm(delta), rtol=1e-6)
