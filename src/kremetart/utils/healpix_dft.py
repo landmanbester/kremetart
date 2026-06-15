@@ -79,3 +79,22 @@ def dft_adjoint(vis, baselines, pix_vec, freqs, *, xp: ModuleType = np):
     """
     kernel = xp.exp(-1j * _phase(baselines, pix_vec, freqs, xp))  # conj of forward
     return xp.einsum("rcj,rc->j", kernel, xp.asarray(vis))  # (npix,)
+
+
+def dirty_map(vis, weights, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+    """Weighted adjoint dirty map: ``Re{ adjoint(weights * vis) } / sum(weights)``.
+
+    Implements the design-doc dirty-map equation directly (equal-area grid: no 1/n factor).
+
+    Args:
+        vis: ``(nrow, nchan)`` complex residual visibilities.
+        weights: ``(nrow, nchan)`` gain-corrected weights ``w_corr``.
+        baselines, pix_vec, freqs, xp: as in :func:`dft_forward`.
+
+    Returns:
+        ``(npix,)`` real dirty image.
+    """
+    vis = xp.asarray(vis)
+    weights = xp.asarray(weights)
+    img = dft_adjoint(weights * vis, baselines, pix_vec, freqs, xp=xp)
+    return img.real / weights.sum()
