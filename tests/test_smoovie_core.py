@@ -1,5 +1,6 @@
 """Tests for the smoovie core (HEALPix movie generation)."""
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -31,3 +32,15 @@ def test_frame_dirty_maps_one_finite_map_per_hdf():
         assert np.all(np.isfinite(m))
     assert pix.shape == (npix, 3)
     assert "UTC" in stamps[0]
+
+
+def test_smoovie_produces_movie(tmp_path):
+    pytest.importorskip("matplotlib")
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available")
+    from kremetart.core.smoovie import smoovie
+
+    _hdfs()  # skip if reference data absent
+    out = tmp_path / "movie.mp4"
+    smoovie(hdf_dir=_DATA, movie=out, nside=32, fps=2)
+    assert out.exists() and out.stat().st_size > 0

@@ -8,6 +8,7 @@ to mp4 with ffmpeg. See docs/superpowers/specs/2026-06-15-smoovie-design.md.
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 
 import numpy as np
 
@@ -52,3 +53,72 @@ def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
         maps.append(np.asarray(dmap))
         stamps.append(_utc(times[mid]))
     return maps, stamps, pix_vec
+
+
+def render_frames(maps, timestamps, nside: int, cmap: str, outdir, *, nest: bool = True):
+    """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import healpy as hp
+    import matplotlib.pyplot as plt
+
+    outdir = Path(outdir)
+    stacked = np.concatenate([np.asarray(m) for m in maps])
+    vmin, vmax = np.percentile(stacked, [1.0, 99.0])
+    paths = []
+    for i, (m, ts) in enumerate(zip(maps, timestamps)):
+        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax))
+        hp.graticule()
+        out = outdir / f"frame_{i:04d}.png"
+        plt.savefig(out, dpi=100)
+        plt.close("all")
+        paths.append(out)
+    return paths
+
+
+def encode_movie(png_paths, movie, fps: int):
+    """Encode an ordered PNG sequence into an mp4 with ffmpeg. Returns the movie path."""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
+    movie = Path(movie)
+    pattern = str(Path(png_paths[0]).parent / "frame_%04d.png")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            pattern,
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            str(movie),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return movie
+
+
+def smoovie(hdf_dir, movie, nside: int = 128, fps: int = 2, cmap: str = "inferno"):
+    """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path."""
+    import tempfile
+
+    if hdf_dir is None or movie is None:
+        raise ValueError("hdf_dir and movie are required")
+    hdf_dir = Path(hdf_dir)
+    movie = Path(movie)
+    hdf_paths = sorted(hdf_dir.glob("*.hdf"))
+    if not hdf_paths:
+        raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
+    maps, stamps, _ = frame_dirty_maps(hdf_paths, nside)
+    with tempfile.TemporaryDirectory() as td:
+        pngs = render_frames(maps, stamps, nside, cmap, Path(td))
+        encode_movie(pngs, movie, fps)
+    return movie
