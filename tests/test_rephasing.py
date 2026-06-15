@@ -88,6 +88,21 @@ def test_field_node_is_celestial_after_rephase(rephased) -> None:
     assert rephased.ds.UVW.attrs["frame"] == "fk5"
 
 
+def test_itrs_baselines_public_helper() -> None:
+    """The public itrs_baselines equals pos[ant1] - pos[ant2] in the partition's baseline order."""
+    from kremetart.utils.rephasing import itrs_baselines
+
+    node = _single_partition(read_hdf_as_msv4(_HDF))
+    bl = np.asarray(itrs_baselines(node, np))
+    ant = node["antenna_xds"].to_dataset(inherit=False)
+    pos = ant.ANTENNA_POSITION.values
+    index = {n: i for i, n in enumerate(ant.antenna_name.values)}
+    a1 = [index[n] for n in node.ds.baseline_antenna1_name.values]
+    a2 = [index[n] for n in node.ds.baseline_antenna2_name.values]
+    assert bl.shape == (276, 3)
+    np.testing.assert_allclose(bl, pos[a1] - pos[a2])
+
+
 def test_rephase_is_identity_at_midpoint_frame(rephased) -> None:
     """At the midpoint frame the new centre equals the instantaneous zenith, so no rotation.
 

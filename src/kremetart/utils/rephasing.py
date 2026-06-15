@@ -111,7 +111,7 @@ def rephase_to_dir(
     ra_old, dec_old, s_old = _instantaneous_zenith(times, loc)  # (n_time,), (n_time,), (n_time, 3)
 
     # ITRS baselines b = pos(ant1) - pos(ant2), in the same antenna order as the main node.
-    baselines = _itrs_baselines(node, xp)  # (n_bl, 3) on device
+    baselines = itrs_baselines(node, xp)  # (n_bl, 3) on device
 
     # --- new and current UVW (device) --------------------------------------------------------
     uvw_new = _project_baselines(baselines, s_new, xp)  # (n_time, n_bl, 3)
@@ -241,7 +241,7 @@ def _project_baselines(baselines, s_host: np.ndarray, xp: ModuleType):
     return xp.stack([uu, vv, ww], axis=-1)
 
 
-def _itrs_baselines(node: xr.DataTree, xp: ModuleType):
+def itrs_baselines(node: xr.DataTree, xp: ModuleType):
     """Form b = pos(ant1) - pos(ant2) in ITRS for every baseline, as an xp array."""
     antenna = node["antenna_xds"].to_dataset(inherit=False)
     pos = antenna.ANTENNA_POSITION.values  # (n_ant, 3) ITRS
