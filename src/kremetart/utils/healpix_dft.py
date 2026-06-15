@@ -147,3 +147,32 @@ def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp:
     if backend == "native":
         raise NotImplementedError("GPU-native C(t) backend is a later phase; use backend='astropy'.")
     raise ValueError(f"unknown backend {backend!r}")
+
+
+def image_frame(
+    vis, weights, times, itrs_baselines, pix_vec, freqs, *, ctime_backend: str = "astropy", xp: ModuleType = np
+):
+    """Per-frame dirty image from unstopped residual visibilities.
+
+    Rotates the ITRS baselines by ``C(t)``, flattens ``(time, baseline)`` into the row axis
+    (the rotated baseline differs per timestamp), and adjoint-DFTs onto the fixed grid.
+
+    Args:
+        vis: ``(n_time, nbl, nchan)`` complex residual visibilities (scalar pol).
+        weights: ``(n_time, nbl, nchan)`` gain-corrected weights.
+        times: ``(n_time,)`` unix-second timestamps.
+        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors.
+        pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
+        freqs: ``(nchan,)`` frequencies in Hz.
+        ctime_backend: passed to :func:`equatorial_baselines`.
+        xp: Array module.
+
+    Returns:
+        ``(npix,)`` real dirty image.
+    """
+    b_rot = equatorial_baselines(itrs_baselines, times, backend=ctime_backend, xp=xp)  # (n_time, nbl, 3)
+    n_time, nbl, nchan = vis.shape
+    rows = b_rot.reshape(n_time * nbl, 3)
+    vis_rows = xp.asarray(vis).reshape(n_time * nbl, nchan)
+    wgt_rows = xp.asarray(weights).reshape(n_time * nbl, nchan)
+    return dirty_map(vis_rows, wgt_rows, rows, pix_vec, freqs, xp=xp)

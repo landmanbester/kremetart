@@ -8,6 +8,7 @@ from kremetart.utils.healpix_dft import (
     dft_forward,
     dirty_map,
     equatorial_baselines,
+    image_frame,
     make_pixel_grid,
 )
 
@@ -105,3 +106,28 @@ def test_equatorial_baselines_matches_itrs_unit_vectors():
 def test_equatorial_baselines_native_not_implemented():
     with pytest.raises(NotImplementedError):
         equatorial_baselines(np.zeros((2, 3)), np.array([1.6e9]), backend="native")
+
+
+def test_image_frame_recovers_source_through_ctime():
+    """End-to-end: model a source per timestamp with C(t), image it back to the right pixel."""
+    pytest.importorskip("astropy")
+    rng = np.random.default_rng(5)
+    nside = 16
+    pix = make_pixel_grid(nside, xp=np)
+    itrs_bl = rng.standard_normal((20, 3)) * 3.0
+    times = np.array([1.6e9, 1.6e9 + 60.0, 1.6e9 + 120.0])
+    freqs = np.array([1.575e9])
+    src = 1500  # valid pixel index for nside=16 (npix=3072)
+
+    b_rot = equatorial_baselines(itrs_bl, times, xp=np)  # (n_time, nbl, 3)
+    n_time, nbl = b_rot.shape[:2]
+    s = pix[src]
+    vis = np.empty((n_time, nbl, 1), dtype=complex)
+    for t in range(n_time):
+        vis[t, :, 0] = np.exp(2j * np.pi * (freqs[0] / LIGHTSPEED) * (b_rot[t] @ s))
+    wgt = np.ones((n_time, nbl, 1))
+
+    dmap = image_frame(vis, wgt, times, itrs_bl, pix, freqs, xp=np)
+    assert dmap.shape == (pix.shape[0],)
+    assert int(np.argmax(dmap)) == src
+    np.testing.assert_allclose(dmap[src], 1.0, atol=1e-12)
