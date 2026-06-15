@@ -7,6 +7,8 @@ docs/superpowers/specs/2026-06-15-accuracy-verification-design.md.
 
 from __future__ import annotations
 
+from types import ModuleType
+
 import numpy as np
 
 LIGHTSPEED = 299792458.0
@@ -61,3 +63,44 @@ def baseline_index_arrays(partition):
     a1 = np.array([index[n] for n in partition.ds.baseline_antenna1_name.values])
     a2 = np.array([index[n] for n in partition.ds.baseline_antenna2_name.values])
     return a1, a2
+
+
+def source_svec(ra, dec) -> np.ndarray:
+    """ICRS unit vectors (n, 3) for ra/dec arrays in radians."""
+    ra = np.atleast_1d(np.asarray(ra, dtype=np.float64))
+    dec = np.atleast_1d(np.asarray(dec, dtype=np.float64))
+    return np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=1)
+
+
+def sources_spanning_zenith(times, lat_deg, lon_deg, alt_m, els_deg, az_deg=0.0):
+    """ICRS (ra, dec) radians for sources at given elevations (deg) at the mid timestamp."""
+    import astropy.units as u
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+
+    times = np.asarray(times)
+    loc = EarthLocation(lat=lat_deg * u.deg, lon=lon_deg * u.deg, height=alt_m * u.m)
+    tmid = Time(times[times.size // 2], format="unix", scale="utc")
+    els = np.atleast_1d(np.asarray(els_deg, dtype=np.float64))
+    aa = AltAz(az=np.full(els.shape, az_deg) * u.deg, alt=els * u.deg, obstime=tmid, location=loc)
+    icrs = SkyCoord(aa).icrs
+    return np.atleast_1d(icrs.ra.rad), np.atleast_1d(icrs.dec.rad)
+
+
+def simulate_visibilities(fluxes, svec, ecef_baselines, times, freqs, *, xp: ModuleType = np):
+    """Truth visibilities V_pq(t) = sum_s f_s exp(2pi i (nu/c) b_pq(t).s_s), shape (n_time, nbl, nchan).
+
+    Uses the shipped forward model with the shared C(t); ``ecef_baselines`` (nbl,3) are the ITRS
+    baseline vectors whose accuracy is under test.
+    """
+    from kremetart.utils.healpix_dft import dft_forward, equatorial_baselines
+
+    fluxes = xp.asarray(fluxes)
+    svec = xp.asarray(svec)
+    b_rot = equatorial_baselines(np.asarray(ecef_baselines), np.asarray(times), xp=xp)  # (nt, nbl, 3)
+    nt, nbl = b_rot.shape[0], b_rot.shape[1]
+    nchan = np.asarray(freqs).shape[0]
+    vis = xp.zeros((nt, nbl, nchan), dtype=xp.complex128)
+    for t in range(nt):
+        vis[t] = dft_forward(fluxes, b_rot[t], svec, freqs, xp=xp)
+    return vis
