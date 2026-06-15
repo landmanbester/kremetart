@@ -38,3 +38,26 @@ def baselines_from_positions(positions, ant1_idx, ant2_idx) -> np.ndarray:
     """Baseline vectors ``pos[ant1] - pos[ant2]`` -> ``(nbl, 3)``."""
     positions = np.asarray(positions)
     return positions[np.asarray(ant1_idx)] - positions[np.asarray(ant2_idx)]
+
+
+def antenna_ecef(antenna_xds) -> np.ndarray:
+    """ANTENNA_POSITION (ECEF, m) as ``(n_ant, 3)`` in antenna-index order."""
+    return np.asarray(antenna_xds.ANTENNA_POSITION.values, dtype=np.float64)
+
+
+def antenna_enu_and_site(partition):
+    """Return (enu (n_ant,3), lat_deg, lon_deg, alt_m) from a kremetart partition node."""
+    ant = partition["antenna_xds"].to_dataset(inherit=False)
+    enu = np.asarray(ant.ANTENNA_POSITION_ENU.values, dtype=np.float64)
+    info = partition.ds.attrs["observation_info"]
+    return enu, info["site_latitude_deg"], info["site_longitude_deg"], info["site_altitude_m"]
+
+
+def baseline_index_arrays(partition):
+    """(ant1_idx, ant2_idx) mapping each baseline to antenna indices, in the partition's order."""
+    ant = partition["antenna_xds"].to_dataset(inherit=False)
+    names = list(ant.antenna_name.values)
+    index = {name: i for i, name in enumerate(names)}
+    a1 = np.array([index[n] for n in partition.ds.baseline_antenna1_name.values])
+    a2 = np.array([index[n] for n in partition.ds.baseline_antenna2_name.values])
+    return a1, a2
