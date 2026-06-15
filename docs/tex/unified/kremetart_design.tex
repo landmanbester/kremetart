@@ -1,0 +1,1454 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\newtheorem{remark}{Remark}
+\newtheorem{proposition}{Proposition}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\tr}{tr}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Norm}{\mathcal{N}}
+\newcommand{\T}{^{\mathsf{T}}}
+\newcommand{\given}{\,|\,}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\half}{\tfrac{1}{2}}
+
+\title{KREMETART: Streaming Calibration, Imaging and Sequential Transient Detection
+for the TART Telescope\\ \large Design notes and staged implementation roadmap}
+\author{Landman Bester}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note consolidates the design of KREMETART (Kalman Real-time Evidence Monitoring Extractor for
+TART), a streaming pipeline that transforms raw TART visibilities into vetted transient candidates
+in real time, organised as a staged implementation roadmap. \textbf{Stage 1} delivers on-the-fly
+direction-independent calibration, calibrator subtraction, and all-sky imaging: one scalar complex
+gain per antenna, $g_p=\exp(a_p+\imath\psi_p)$, and one real flux per catalogued (predominantly
+GNSS) source are tracked by a robust iterated extended Kalman filter built on integrated
+Wiener-process (IWP) dynamics, with the gauge fixed by eliminating a reference antenna's
+log-amplitude and phase, the linear flux block marginalised exactly in closed form, robustness
+supplied by a Student-$t$ likelihood realised as IRLS, a short fixed-lag smoother refining the
+subtraction, and the gain-corrected residuals imaged by a gridless DFT \emph{natively onto a fixed
+equatorial HEALPix grid} by rotating the baselines---no map resampling, no phase centre. \textbf{Stage 2}
+runs, per equatorial pixel, an IWP--Kalman whitening filter whose innovations feed one-sided
+CUSUM/GLR sequential change detection across a multi-scale model bank, with below-horizon gaps
+handled exactly by the $\Delta$-dependent predict step; alarms are confirmed by a PSF matched
+filter on the snapshot innovation map and screened by kinematic and TLE-catalogue vetoes that
+separate celestial candidates from satellites and aircraft. \textbf{Stage 3} adds a strictly
+post-alarm machine-learning layer---active-learning anomaly detection, an injection-trained
+real/bogus classifier, and self-supervised representations---designed for the label-poor regime.
+\textbf{Stage 4} sketches the route to a peer-reviewed publication: required results, action items,
+and the caveats that must be explored and stated. Each stage is gated by the validation results of
+its predecessor.
+\end{abstract}
+
+\section{Introduction and staged roadmap}
+\label{sec:roadmap}
+
+The task is to transform raw uncalibrated TART visibilities $V_{pq,t}$ into a stream of vetted
+transient candidates, in real time, on GPU hardware, with every statistical claim of the detector
+calibrated and auditable. TART~\cite{tart} is a 24-element, single-polarisation, zenith-pointing
+all-sky array at L1 (1.575~GHz); its sky is dominated by GNSS satellites of order
+$10^5$--$10^7$~Jy, which serve simultaneously as calibrators and as the dominant subtraction
+hazard. The pipeline is realised as a Holoscan streaming graph with CuPy as the numerical backend;
+although the TART calibration problem is tiny in absolute terms, the pipeline is a \emph{pathfinder}
+for the same architecture on much larger interferometric arrays, so every stage is GPU-resident by
+design.
+
+The implementation is staged, each stage gated by the validation results of the previous:
+\begin{description}[leftmargin=*]
+  \item[Stage 1 (Section~\ref{sec:stage1}):] streaming calibration, calibrator subtraction, and
+    all-sky imaging onto a fixed equatorial HEALPix grid, with offline hyperparameter calibration
+    and validation against existing TART software (StEFCal-bootstrapped gain tracks, \textsc{disko}
+    imaging).
+  \item[Stage 2 (Section~\ref{sec:stage2}):] per-pixel sequential transient detection
+    (IWP--Kalman whitening, CUSUM/GLR bank), spatial PSF confirmation, and rule-based vetoes.
+    No machine learning.
+  \item[Stage 3 (Section~\ref{sec:stage3}):] machine-learning candidate classification, strictly
+    post-alarm, built for the label-poor regime (active learning, injection-trained classifiers,
+    self-supervised representations).
+  \item[Stage 4 (Section~\ref{sec:stage4}):] consolidation into a peer-reviewed publication:
+    required results, action items, caveats.
+\end{description}
+The mathematical machinery shared by Stages 1 and 2---IWP priors, exact discretisation, the Kalman
+filter and its innovations, evidence, and consistency statistics---is collected once in
+Section~\ref{sec:prelim}.
+
+A single architectural decision underpins the whole design and is worth stating up front:
+\emph{calibration lives in the local ENU frame; imaging and detection live on a fixed equatorial
+HEALPix grid; and the two are connected by rotating the baselines, not the maps}
+(Section~\ref{sec:imaging}). Because the imager is a gridless DFT, defining the pixel grid in
+equatorial coordinates and applying one $3\times3$ rotation to the baseline vectors per frame
+evaluates the residual map natively on a sidereally fixed sky, at identical cost, with no
+interpolation. Steady celestial sources then occupy fixed pixels (instead of masquerading as
+pixel-crossing transients), and the horizon reduces to a slowly sliding pixel mask whose gaps the
+detector's $\Delta$-exact state-space machinery absorbs automatically.
+
+\section{Mathematical preliminaries}
+\label{sec:prelim}
+
+Both the calibration parameters of Stage 1 and the per-pixel quiescent light curves of Stage 2 use
+the same temporal prior and the same recursive inference engine, developed here once in the
+language of a generic scalar signal $f(t)$ observed in noise. Throughout, lower-case bold denotes
+column vectors, upper-case bold matrices, and $\Norm(\bm{m},\bm{\Sigma})$ the Gaussian density with
+mean $\bm{m}$ and covariance $\bm{\Sigma}$.
+
+\subsection{Notation and acronyms}
+
+
+Throughout, lower-case bold denotes column vectors, upper-case bold matrices, and
+$\Norm(\bm{m},\bm{\Sigma})$ the Gaussian density with mean $\bm{m}$ and covariance
+$\bm{\Sigma}$. Table~\ref{tab:acro} collects the acronyms.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+Acronym & Meaning \\
+\midrule
+SDE   & Stochastic differential equation \\
+GP    & Gaussian process \\
+IWP   & Integrated Wiener process (the quiescent prior) \\
+KF    & Kalman filter \\
+LLR   & Log-likelihood ratio \\
+LR / NP & Likelihood ratio / Neyman--Pearson (lemma) \\
+SPRT  & Sequential probability ratio test (Wald) \\
+CUSUM & Cumulative sum (change-detection) test (Page) \\
+GLR   & Generalised likelihood ratio (test) \\
+NIS   & Normalised innovation squared \\
+NEES  & Normalised estimation error squared \\
+ARL   & Average run length \\
+ROC   & Receiver operating characteristic \\
+FDR   & False discovery rate \\
+BMA   & Bayesian model averaging \\
+RFI   & Radio-frequency interference \\
+EKF   & Extended Kalman filter \\
+IRLS  & Iteratively reweighted least squares \\
+GNSS  & Global Navigation Satellite System \\
+PSF   & Point-spread function (synthesised / dirty beam) \\
+ENU   & Local east--north--up coordinate frame \\
+LST   & Local sidereal time \\
+TLE   & Two-line elements (public satellite orbital elements) \\
+SSL   & Self-supervised learning \\
+SSA   & Space situational awareness \\
+\bottomrule
+\end{tabular}
+\caption{Acronyms used in this note.}
+\label{tab:acro}
+\end{table}
+
+\subsection{The quiescent model: an integrated Wiener process}
+\label{sec:iwp}
+
+\paragraph{Continuous-time prior.}
+A \emph{stochastic differential equation} (SDE) describes a continuous-time random
+process through an ordinary differential equation driven by white noise. We model the
+quiescent flux $f(t)$ as the $q$-times \emph{integrated Wiener process} (IWP): the
+$q$-th derivative of $f$ is a Wiener process (Brownian motion). Collecting $f$ and its
+first $q$ derivatives into a state vector
+$\bm{x}(t)=\big(f(t),\,f^{(1)}(t),\dots,f^{(q)}(t)\big)\T\in\R^{q+1}$, the IWP is the
+linear SDE
+\begin{equation}
+  \dd \bm{x}(t) \;=\; \bm{F}\,\bm{x}(t)\,\dd t \;+\; \bm{L}\,\dd\beta(t),
+  \qquad
+  \bm{F}=\begin{pmatrix} 0 & 1 & & \\ & 0 & \ddots & \\ & & \ddots & 1 \\ & & & 0\end{pmatrix},
+  \quad
+  \bm{L}=\begin{pmatrix}0\\\vdots\\0\\1\end{pmatrix},
+  \label{eq:sde}
+\end{equation}
+where $\beta(t)$ is a scalar Wiener process with diffusion (spectral density)
+$\sigma^2$. The scalar $\sigma^2$ is the \emph{driving variance}: it sets how rapidly
+the top derivative wanders, hence how ``stiff'' or ``flexible'' the light curve is.
+The IWP is a \emph{Gauss--Markov process}---Gaussian, and Markov in the state
+$\bm{x}$---which is exactly what makes recursive (Kalman) inference exact and
+$O(1)$ per sample.
+
+\begin{remark}[Relation to Mat\'ern Gaussian processes and ``length scale'']
+The IWP is non-stationary: its variance grows without bound, so it has no stationary
+length scale. It is the natural smoothness prior of probabilistic numerics. A
+\emph{stationary} alternative with an explicit length scale $\ell$ is the
+Mat\'ern Gaussian process (GP) of half-integer smoothness $\nu=q+\tfrac12$, which
+admits an SDE representation of the same order $q{+}1$ (the companion matrix $\bm{F}$
+gains a stable characteristic polynomial set by $\ell$). In the bank of
+Section~\ref{sec:bank} the ``scales'' are realised by varying $\sigma^2$ (and
+optionally the order $q$) for the IWP, or $\ell$ for the Mat\'ern variant. We use
+``stiffness'' for the qualitative knob: smaller $\sigma^2$ (or larger $\ell$) $=$
+stiffer $=$ slower to follow changes.
+\end{remark}
+
+\paragraph{Exact discretisation.}
+For a sampling interval $\Delta_k=t_k-t_{k-1}$, the SDE \eqref{eq:sde} integrates
+\emph{exactly} to a discrete linear-Gaussian transition
+\begin{equation}
+  \bm{x}_k = \bm{A}(\Delta_k)\,\bm{x}_{k-1} + \bm{w}_k,
+  \qquad \bm{w}_k\sim\Norm(\bm 0,\bm{Q}(\Delta_k)),
+  \label{eq:disc}
+\end{equation}
+with $\bm{A}(\Delta)=\exp(\bm{F}\Delta)$ and
+$\bm{Q}(\Delta)=\int_0^{\Delta}\!\exp(\bm{F}s)\,\bm{L}\sigma^2\bm{L}\T\exp(\bm{F}s)\T\dd s$.
+Both are polynomials in $\Delta$. Indexing rows/columns by derivative order
+$i,j\in\{0,\dots,q\}$,
+\begin{equation}
+  A_{ij}(\Delta)=\frac{\Delta^{\,j-i}}{(j-i)!}\ \ (j\ge i),\quad 0\ \text{otherwise};
+  \qquad
+  Q_{ij}(\Delta)=\sigma^2\,\frac{\Delta^{\,2q-i-j+1}}{(q-i)!\,(q-j)!\,(2q-i-j+1)} .
+  \label{eq:AQ}
+\end{equation}
+The two cases used in practice are the constant-velocity ($q{=}1$) and
+constant-acceleration ($q{=}2$) models:
+\begin{equation*}
+  q{=}1:\
+  \bm{A}=\begin{pmatrix}1&\Delta\\0&1\end{pmatrix},\
+  \bm{Q}=\sigma^2\begin{pmatrix}\Delta^3/3&\Delta^2/2\\\Delta^2/2&\Delta\end{pmatrix};
+  \quad
+  q{=}2:\
+  \bm{A}=\begin{pmatrix}1&\Delta&\Delta^2/2\\0&1&\Delta\\0&0&1\end{pmatrix},\
+  \bm{Q}=\sigma^2\!\begin{pmatrix}\tfrac{\Delta^5}{20}&\tfrac{\Delta^4}{8}&\tfrac{\Delta^3}{6}\\[2pt]
+  \tfrac{\Delta^4}{8}&\tfrac{\Delta^3}{3}&\tfrac{\Delta^2}{2}\\[2pt]
+  \tfrac{\Delta^3}{6}&\tfrac{\Delta^2}{2}&\Delta\end{pmatrix}.
+\end{equation*}
+For uniform sampling $\bm{A}$ and $\bm{Q}$ \emph{may} be cached per scale, but per the hard
+requirement of Section~\ref{sec:statespace} no implementation may \emph{assume} uniformity: both
+matrices are functions of the actual $\Delta_k$ from the timestamp stream, and on the equatorial
+detection grid (Section~\ref{sec:frame}) large $\Delta_k$ from below-horizon gaps are the
+\emph{normal} operating mode of every pixel filter, not an edge case.
+
+\subsection{Observation model and the Kalman filter}
+\label{sec:kf}
+
+We observe the flux (the zeroth derivative) in additive Gaussian noise:
+\begin{equation}
+  y_k = \bm{H}\bm{x}_k + v_k, \qquad \bm{H}=(1,0,\dots,0),\qquad v_k\sim\Norm(0,R_k),
+\end{equation}
+where $R_k$ is the per-frame noise variance, taken from the imaging weights / thermal
+sensitivity (it may vary across pixels and frames). Together
+\eqref{eq:disc} and this equation form a \emph{linear-Gaussian state-space model}, for
+which the \emph{Kalman filter} (KF) gives the exact filtering distribution
+$p(\bm{x}_k\given y_{1:k})=\Norm(\bm{x}_{k|k},\bm{P}_{k|k})$ recursively.
+
+\paragraph{Recursion.} With $\bm{x}_{k|k-1}=\bm{A}\bm{x}_{k-1|k-1}$ and
+$\bm{P}_{k|k-1}=\bm{A}\bm{P}_{k-1|k-1}\bm{A}\T+\bm{Q}$ (prediction):
+\begin{align}
+  e_k &= y_k - \bm{H}\bm{x}_{k|k-1}
+      &&\text{(\emph{innovation}: one-step prediction error)},\\
+  S_k &= \bm{H}\bm{P}_{k|k-1}\bm{H}\T + R_k
+      &&\text{(\emph{innovation variance})},\\
+  \bm{K}_k &= \bm{P}_{k|k-1}\bm{H}\T S_k^{-1}
+      &&\text{(\emph{Kalman gain})},\\
+  \bm{x}_{k|k} &= \bm{x}_{k|k-1} + \bm{K}_k e_k, \quad
+  \bm{P}_{k|k} = (\bm{I}-\bm{K}_k\bm{H})\bm{P}_{k|k-1}
+      &&\text{(\emph{update})}.
+\end{align}
+For numerical robustness across many parallel filters use the Joseph form
+$\bm{P}_{k|k}=(\bm{I}-\bm{K}_k\bm{H})\bm{P}_{k|k-1}(\bm{I}-\bm{K}_k\bm{H})\T+\bm{K}_k R_k\bm{K}_k\T$,
+or a square-root filter.
+
+\paragraph{The whitening property.}
+The decisive fact for detection is that, \emph{under the model}, the innovation
+sequence is zero-mean and temporally white (Kailath's innovations approach):
+\begin{equation}
+  \E[e_k]=0,\qquad \E[e_k e_j] = S_k\,\delta_{kj}.
+  \label{eq:white}
+\end{equation}
+The KF therefore acts as a \emph{whitening filter}: it removes all the predictable
+(quiescent) structure, leaving a white residual. Anything that is \emph{not} explained
+by the quiescent model survives in the innovations. Detection becomes a test on the
+innovation sequence rather than on the raw, correlated light curve.
+
+\subsection{The Bayesian evidence (prediction-error decomposition)}
+\label{sec:evidence}
+
+Because the innovations are independent Gaussians, the marginal likelihood of the data
+under the model---the \emph{Bayesian evidence}---factorises as the product of the
+one-step predictive densities (the ``prediction-error decomposition''):
+\begin{equation}
+  \log p(y_{1:K}\given \theta)
+  = \sum_{k=1}^{K}\log\Norm(y_k; \bm{H}\bm{x}_{k|k-1}, S_k)
+  = -\half\sum_{k=1}^{K}\Big[\log(2\pi S_k) + \tfrac{e_k^2}{S_k}\Big],
+  \label{eq:evidence}
+\end{equation}
+where $\theta=(q,\sigma^2,\dots)$ are the model hyperparameters. This is the evidence
+``that falls out of the Kalman filter.'' It serves two roles: (i) hyperparameter
+inference, by maximising or marginalising \eqref{eq:evidence} over $\theta$ (the
+objective is differentiable, so gradient methods or a grid both work); and (ii)
+weighting the model bank in Section~\ref{sec:bank}. Note that for the linear-Gaussian
+model \eqref{eq:evidence} is \emph{exact in closed form}; no particle/importance
+sampling is required to evaluate or marginalise it.
+
+\subsection{Innovation consistency: NIS and NEES}
+\label{sec:nis}
+
+Define the \emph{normalised innovation}
+\begin{equation}
+  z_k \;=\; \frac{e_k}{\sqrt{S_k}} \;\sim\; \Norm(0,1)\quad\text{under the quiescent model},
+\end{equation}
+and the \emph{normalised innovation squared} (NIS)
+\begin{equation}
+  \epsilon_k \;=\; e_k\T S_k^{-1} e_k \;=\; z_k^2 \;\sim\; \chi^2_{n_y},
+\end{equation}
+where $\chi^2_{n_y}$ is the chi-squared distribution with $n_y$ degrees of freedom and
+$n_y=\dim(y_k)=1$ here. (The state-space analogue using the true state error,
+$(\bm{x}_k-\bm{x}_{k|k})\T\bm{P}_{k|k}^{-1}(\bm{x}_k-\bm{x}_{k|k})\sim\chi^2_{n_x}$, is
+the \emph{normalised estimation error squared}, NEES; it requires ground truth and is
+used in simulation to verify filter consistency.)
+
+A time-averaged NIS over $W$ samples, $\bar\epsilon=\tfrac1W\sum\epsilon_k$, has mean
+$n_y$ and lies within $[\,\chi^2_{n_y W}(\tfrac\alpha2),\,\chi^2_{n_y W}(1-\tfrac\alpha2)\,]/W$
+with probability $1-\alpha$ under the model. This is a \emph{consistency check}:
+before trusting any detection, confirm the quiescent innovations are white and
+unit-variance (NIS in bounds; flat autocorrelation of $z_k$). NIS is, however, a
+two-sided single-sample statistic---it discards the sign of the innovation and does
+not accumulate evidence---so it is a poor detector of faint or slow transients. The
+detector proper accumulates the \emph{signed} innovations, as developed in Section~\ref{sec:seqdet}.
+
+
+\section{Stage 1: streaming calibration, imaging and validation}
+\label{sec:stage1}
+
+\subsection{Overview of the imaging and calibration problem}
+
+The task is to transform the raw uncalibrated visibilities $V_{pq,t}(\bm{b})$ into calibrated residual images $I_{t}(\bm{l})$ in real time, where $p,q$ index the antennas, $t$ the time, $\bm{b}$ the baseline vector, and $\bm{l}$ the direction on the sky. Because real-time streaming is required, calibration and calibrator source flux estimation needs to happen simultaneously (it is only the calibrator positions which are known a-priori and these are not always 100\% accurate). The streaming nature of the problem makes Holoscan a natural fit for the software implementation, with CuPy---rather than an autodiff framework such as JAX---as the numerical backend for the inference machinery. Two considerations are decisive, and neither is that JAX \emph{cannot} do the job---it offers DLPack zero-copy and its own memory-fraction controls. First, the calibration Jacobian is highly structured (Section~\ref{sec:obs}): the antenna-bipartite gain block and the dense flux block are assembled into the normal equations by hand either way, so automatic differentiation buys little. Second, the pipeline must eventually run on constrained hardware, where the real hazard is three GPU allocators---XLA's, CuPy's, and Holoscan's---contending for the same device memory in one process; standardising on CuPy keeps a single, explicitly budgeted pool that already backs the existing Holoscan operators and exchanges buffers with them at zero copy. A third consideration is strategic: the TART calibration problem is, in absolute terms, tiny ($P\sim24$ antennas, $\sim\!276$ baselines, $S_t\sim10$--$15$ visible sources) and would comfortably run on a CPU; but this pipeline is a \emph{pathfinder} for the same architecture on much larger interferometric arrays, so every stage---including the calibration filter---is implemented GPU-resident from the outset, and structural choices (block layouts, structure-aware solvers) are made with scaling in mind rather than with TART's trivial sizes as the design point. We nonetheless maintain a JAX reference implementation of the update for development and as a gradient-check oracle against the hand-coded CuPy kernels (Section~\ref{sec:notes}).
+
+We assume a measurement model of the form
+\begin{equation}
+  V_{pq,t}(\bm{b}) = \exp\left(a_p(t) + \imath \psi_p(t)\right) \left( \sum_s A_s(t) X_{pq,ts} \right) \exp\left(a_q(t) - \imath \psi_q(t)\right),
+\end{equation}
+where the scalar gain log-amplitudes $a_{p/q}$ are slowly varying real functions of time, the gain phases $\psi_{p/q}$ are more quickly varying real functions of time, the calibrator source fluxes $A_s$ are slowly varying real functions of time, and $X_{pq,ts}$ is the known unit coherencies of source $s$ to the visibility on baseline $pq$ at time $t$. The TART telescope~\cite{tart} always points at zenith and sees almost the whole hemisphere it is located in. This makes spherical coordinates the natural choice for the image domain and the calibrator source positions. The residual images should be computed on a Healpix grid.
+
+Calibrator sources are predominantly Global Navigation Satellite System (GNSS) satellites in medium Earth orbit (MEO, $\sim$20{,}200~km), with a minority in geostationary or inclined-geosynchronous orbits along the ecliptic. They are extremely bright (of order $10^5$--$10^7$~Jy) and have well-known positions from broadcast ephemerides, though their fluxes vary on minute-to-hour time-scales, and their orbital motion (negligible only for the geostationary minority) is what modulates each fringe and aids the flux/gain separation. These sources dominate the L1 sky by orders of magnitude over natural emission: the Sun is comparatively faint at 1.575~GHz and contributes appreciably only during active periods, and the A-team sources sit below this array's confusion floor. The catalogue is therefore satellite-driven, but the source machinery is agnostic to source type---folding in the Sun (known ephemeris, non-negative IWP flux) is a sensible first extension, with bright catalogued sources a later milestone---and any extended Galactic emission, which the point-source model cannot represent, will appear in the residual as a sidereally drifting background (handled by detecting on the sidereally fixed pixel grid of Sections~\ref{sec:imaging} and~\ref{sec:frame}). The gain log-amplitudes and phases are driven by independent integrated Wiener processes (IWPs) with different driving noise levels. The calibrator source fluxes are also driven by independent IWPs, with smaller driving noise levels than the gain parameters---though ``smaller'' must be qualified: what the filter tracks is the \emph{apparent} flux, which for a moving satellite is modulated by the antenna element beam and the satellite's own transmit pattern on the same minute time-scales as its elevation change (see Section~\ref{sec:imaging} for the implied constraint on $\sigma_A^2$ and the planned beam-model mitigation). Since the catalogue is almost always incomplete, a robust heavy-tailed likelihood is required to prevent un-modelled \emph{point-like} outliers (a passing un-catalogued emitter, RFI) from dominating inference---note that this mechanism handles sparse per-baseline outliers, not a bright coherent source, which must instead be added to the catalogue. The IWP state-space model and the heavy-tailed likelihood are combined in a robust iterated extended Kalman filter: the gains are updated by an antenna-based Gauss--Newton step in $(a,\psi)$, while the catalogue fluxes---which enter the model linearly---are marginalised out in closed form. The filter tracks the calibration parameters, subtracts the calibrator sources, and emits a gain-corrected residual visibility stream that is imaged to produce the residual images fed to the detection pipeline.
+
+The remainder of this note formalises the calibration filter and the imaging step. Section~\ref{sec:statespace} sets up the IWP state-space model and fixes the gauge; Section~\ref{sec:obs} gives the linearised (iterated-EKF) observation update and its Jacobian; Section~\ref{sec:robust} adds the heavy-tailed likelihood; Section~\ref{sec:flux} Rao--Blackwellises the source fluxes and describes their warm-up; Section~\ref{sec:imaging} defines the gain-corrected residual visibilities and their projection onto a HEALPix grid; Section~\ref{sec:hyper} covers offline calibration of the driving variances; and Section~\ref{sec:notes} collects implementation choices and reuse of existing TART software (the \texttt{tart-telescope} organisation and T.~Molteno's repositories, especially \textsc{disko} and \textsc{spotless}).
+
+\subsection{State-space model for the calibration parameters}
+\label{sec:statespace}
+
+Let $P$ be the number of antennas and $S_t$ the number of catalogued sources above the
+horizon at time $t$. We track the gain log-amplitudes $a_p$, the gain phases $\psi_p$
+($p=1,\dots,P$), and the source fluxes $A_s$ ($s=1,\dots,S_t$). Each scalar parameter is an
+independent IWP~\cite{sarkka}; following Section~\ref{sec:iwp} we lift a scalar parameter $\theta$ and
+its first $q$ derivatives into a state $\bm{\theta}=(\theta,\dot\theta,\dots,\theta^{(q)})\T$
+with the exact discrete transition
+\begin{equation}
+  \bm{\theta}_k = \bm{A}_\theta(\Delta_k)\,\bm{\theta}_{k-1}+\bm{w}_k,
+  \qquad \bm{w}_k\sim\Norm(\bm 0,\bm{Q}_\theta(\Delta_k)),
+\end{equation}
+where $\bm{A}_\theta,\bm{Q}_\theta$ are the closed-form IWP matrices of Section~\ref{sec:iwp} and depend on the per-parameter driving variance $\sigma_\theta^2$. We default to
+$q=1$ (a locally linear, ``constant-velocity'' model) for every parameter; the order may be
+raised per group if the offline data warrant it. Stacking the per-parameter blocks gives the
+full state $\bm{x}_k$ and a block-diagonal transition
+\begin{equation}
+  \bm{x}_k=\bm{F}_k\,\bm{x}_{k-1}+\bm{w}_k,
+  \qquad \bm{F}_k=\operatorname{blkdiag}\big(\{\bm{A}_{a_p}\},\{\bm{A}_{\psi_p}\},\{\bm{A}_{A_s}\}\big),
+\end{equation}
+with $\bm{Q}_k$ the matching block-diagonal process covariance, so the predict step is exact,
+decoupled across parameters, and $O(P+S_t)$ per frame.
+
+\paragraph{Irregular cadence is a hard requirement.} The transition matrices are functions of the
+\emph{actual} inter-frame interval $\Delta_k$, and this is precisely what makes the filter robust to
+dropped frames, ingest hiccups, and variable cadence: gaps are handled exactly, for free, by
+evaluating $\bm{A}_\theta(\Delta_k)$ and $\bm{Q}_\theta(\Delta_k)$ from the timestamp stream every
+frame. The implementation must therefore, under no circumstances, assume a constant $\Delta$---no
+stage may cache fixed-step transition or process-noise matrices, and every operator consumes the
+timestamps alongside the data. Any fixed-step shortcut silently forfeits this robustness and turns
+every dropped frame into a model-mismatch transient.
+
+\paragraph{Driving variances are fixed.} The driving-variance groups---$\sigma_a^2$ (slow),
+$\sigma_\psi^2$ (faster), and $\sigma_A^2$ (slow, modulo the warm-up of
+Section~\ref{sec:flux})---are \emph{not} estimated online. They are calibrated once from the
+existing offline reductions (Section~\ref{sec:hyper}). This is deliberate: inferring the
+driving variances through the marginal likelihood while a heavy-tailed likelihood
+simultaneously reweights the data is poorly conditioned, the two mechanisms competing to
+explain the same residual.
+
+\paragraph{Identifiability and gauge fixing.} The likelihood depends on the gains only through
+the products $g_p g_q^{\ast}=\exp(a_p+a_q)\exp\!\big(\imath(\psi_p-\psi_q)\big)$, which leaves
+exactly two unobservable real degrees of freedom (rank-one each), independent of source motion:
+\begin{itemize}[leftmargin=*]
+  \item a global phase $\psi_p\mapsto\psi_p+\phi$ cancels in every $g_pg_q^{\ast}$; we remove
+        it by \emph{eliminating} a reference-antenna phase from the state,
+        $\psi_{\mathrm{ref}}\equiv0$, so the freedom is absent in both mean and covariance;
+  \item a global log-amplitude $a_p\mapsto a_p+c$ rescales every visibility by $e^{2c}$ and is
+        exactly degenerate with an overall flux rescaling $A_s\mapsto e^{-2c}A_s$. The
+        catalogue supplies positions but \emph{no} fluxes, so the scale cannot be anchored on
+        the source side. We fix it exactly as we fix the phase: by \emph{eliminating} the
+        reference antenna's log-amplitude from the state, $a_{\mathrm{ref}}\equiv0$ (i.e.\ unit
+        reference amplitude), using the \emph{same} reference antenna for both gauges. Two
+        rejected alternatives explain the choice. The arbitrary zero-sum constraint
+        $\sum_p a_p=0$ spreads a fictitious constraint across all antennas and, enforced as a
+        mean projection, leaks process noise into the unconstrained covariance direction. An
+        informative Gaussian prior on each $a_p$ (centred on offline-determined means) is more
+        subtly defective: in a \emph{filter}, a prior is only the initial condition. The
+        all-ones amplitude mode is unobservable, so it is never corrected by data, and every
+        predict step injects process noise into it---the covariance along that mode grows
+        without bound and the mean random-walks. The prior anchors the gauge at $t=0$ and
+        nothing thereafter; restoring persistence would require re-applying it as a per-frame
+        pseudo-observation, which is workable but adds machinery. Eliminating
+        $a_{\mathrm{ref}}$ breaks exactly the rank-one scale freedom, leaves the relative
+        antenna amplitudes entirely data-driven, cannot drift, and is the precise analogue of
+        the reference-phase elimination---one mechanism, applied twice. The offline amplitude
+        means are retained, but demoted to what they really are: a good \emph{initialisation}
+        (re-centred so that $a_{\mathrm{ref}}=0$; Section~\ref{sec:obs}), not a gauge.
+\end{itemize}
+The recovered flux scale is therefore \emph{relative} (self-calibrated), pinned to the reference
+antenna's true (unmodelled) gain amplitude; this is sufficient for transient detection, which is
+differential. The per-frame noise scale entering the detector is independent of this gauge
+(Section~\ref{sec:imaging}).
+
+\paragraph{Reference-antenna failover.} Tying both gauges to one antenna creates an operational
+single point of failure: if the reference antenna is flagged or fails mid-run, both gauges are lost.
+In principle the state can be re-gauged analytically---subtract the new reference's phase and
+log-amplitude from all antennas' means and apply the corresponding congruent transform to the
+covariance---and this is the eventual refinement. For the initial implementation we adopt the
+simpler, more conservative procedure: \emph{reset} the pipeline with a new reference antenna,
+re-running the StEFCal acquisition of Section~\ref{sec:obs}. Acquisition is fast (a few bootstrap
+iterations) and reference failure should be rare, so the occasional re-acquisition transient is an
+acceptable price for not maintaining re-gauging code. The choice of reference antenna, and the
+failover order, are configuration items; the monitoring stream (Section~\ref{sec:notes}) should
+alert on reference-antenna flagging specifically.
+
+\paragraph{Flagged (dead) antennas.} Real TART data routinely contain antennas with no usable
+signal---persistently flagged hardware, or the zero-gain entries the existing reductions already
+mark (in the validation archive, one of the 24 antennas is dead in every frame). Such an antenna is
+treated exactly like the reference: its log-amplitude and phase are \emph{pinned} to unit amplitude
+and zero phase ($a_p\equiv0,\ \psi_p\equiv0$) and \emph{eliminated} from the evolving state, and
+every baseline touching it is flagged out of the observation. It is \emph{not} carried as a live IWP
+state. This is not a cosmetic choice: an IWP state the likelihood never constrains is precisely the
+unobservable-mode pathology of the gauge discussion above---every predict step injects process
+noise, so the covariance along that mode grows without bound and the mean random-walks. Pinning
+removes the mode entirely. When a flagged antenna returns, it re-enters through the same StEFCal
+bootstrap used at acquisition (Section~\ref{sec:obs}), with a short per-antenna warm-up; antenna
+flagging is part of the monitoring stream of Section~\ref{sec:notes}.
+
+\subsection{Observation model and its linearisation}
+\label{sec:obs}
+
+At time $t_k$ each baseline $pq$ contributes a complex visibility. With the
+single-polarisation scalar gains and the catalogue coherencies $X_{pq,s}$---unit-amplitude
+fringes computed from the known source directions (Section~\ref{sec:imaging})---the noise-free
+model is
+\begin{equation}
+  \hat V_{pq} = g_p\,\hat M_{pq}\,g_q^{\ast},\qquad
+  \hat M_{pq}=\sum_{s} A_s\,X_{pq,s},\qquad
+  g_p=\exp(a_p+\imath\psi_p).
+  \label{eq:model}
+\end{equation}
+We observe $V_{pq}=\hat V_{pq}+n_{pq}$ with circular complex noise $n_{pq}$ whose variance is
+set by the data weights, stacking real and imaginary parts as two real observations per
+baseline.
+
+\paragraph{StEFCal for acquisition, $(a,\psi)$ for tracking.} StEFCal~\cite{stefcal} exploits that,
+holding all \emph{other} antennas' complex gains fixed, $\hat V_{pq}$ is \emph{linear} in $g_p$,
+giving an antenna-by-antenna linear least squares. Its real virtue is that this complex-linear
+form has no phase-wrapping or local-minimum problem, which makes it an excellent \emph{acquisition}
+(cold-start) solver. We do not, however, run it as the per-frame iteration. We track the gains as
+$(a_p,\psi_p)$ for two reasons that the complex-$g$ parametrisation does not serve: the
+log-amplitude and phase carry distinct temporal statistics (slow amplitude, faster phase) and so
+want \emph{separate} IWP driving variances; and the log enforces amplitude positivity intrinsically.
+$\hat V_{pq}$ is mildly nonlinear in $(a,\psi)$, so we linearise directly (Gauss--Newton / iterated
+EKF). The antenna-based normal-equations structure StEFCal exploits survives the change of
+parametrisation (Section~\ref{sec:obs}), in a cleaner form; the cost is that the phase linearisation
+is valid only while the frame-to-frame phase change stays well under $\pm\pi$, which the frame rate
+must respect.
+
+\paragraph{Initialisation.} The IWP-EKF needs a good initial state, and a cold-start phase solution
+is non-convex. We bootstrap it with StEFCal, exploiting that the StEFCal \emph{phases} are driven by
+the known source geometry and are reliable even with a rough flux model, whereas the StEFCal
+\emph{amplitudes} are entangled with the unknown fluxes and are not. The recipe is: (i) seed a rough
+catalogue flux model; (ii) solve complex gains with StEFCal and keep only the phases (re-referenced
+so $\psi_{\mathrm{ref}}=0$); (iii) set the antenna log-amplitudes to their offline-determined mean
+values \emph{re-centred on the reference antenna}, $a_p \leftarrow \bar a_p - \bar a_{\mathrm{ref}}$,
+so that $a_{\mathrm{ref}}=0$ holds by construction---the offline means serve only as a good starting
+point, the gauge itself being fixed by the elimination of Section~\ref{sec:statespace}; (iv) with the gains thus fixed, solve the linear
+least-squares problem for the source fluxes. Steps (ii)--(iv) may be iterated two or
+three times---this is simply bootstrapped self-calibration and converges quickly---which makes the
+phases robust to the initial relative-flux guess. The resulting gains and fluxes seed the IWP-EKF
+mean, with the offline-calibrated covariances as the initial uncertainty.
+
+\paragraph{Jacobian.} Differentiating \eqref{eq:model} at the current estimate,
+\begin{equation}
+  \frac{\partial \hat V_{pq}}{\partial a_p}=\frac{\partial \hat V_{pq}}{\partial a_q}=\hat V_{pq},
+  \qquad
+  \frac{\partial \hat V_{pq}}{\partial \psi_p}=+\imath\,\hat V_{pq},
+  \qquad
+  \frac{\partial \hat V_{pq}}{\partial \psi_q}=-\imath\,\hat V_{pq},
+  \qquad
+  \frac{\partial \hat V_{pq}}{\partial A_s}=g_p\,X_{pq,s}\,g_q^{\ast}.
+  \label{eq:jac}
+\end{equation}
+The gain derivatives are simply the model visibility rotated by $0$ or $\tfrac{\pi}{2}$, so the
+Jacobian costs nothing beyond $\hat V_{pq}$, which we already form. Each baseline row touches
+only its two antennas: the gain block of the Jacobian inherits the \emph{bipartite}
+(baseline$\,\times\,$antenna) sparsity of the array's incidence structure, whereas the flux
+block $\partial\hat V_{pq}/\partial A_s$ is dense (every baseline sees every source). The
+antenna-based normal-equations structure that StEFCal exploits therefore re-appears in
+$\bm{H}_k^{\ast}\bm{H}_k$, despite the change of parametrisation---which is what makes a
+hand-coded, structure-aware solver attractive.
+
+\paragraph{Iterated-EKF measurement update.} Let $\bm{H}_k$ be the stacked (real/imag) Jacobian
+\eqref{eq:jac} and $\bm{e}_k=V_k-\hat V_k(\bm{x}_{k|k-1})$ the innovation at the predicted mean.
+One Gauss--Newton step is the standard EKF update~\cite{barshalom}; relinearising about the running estimate and
+repeating yields the \emph{iterated} EKF, i.e. a Gauss--Newton solver for the MAP state under
+the IWP prior. The phase block in particular can converge slowly, so the inner iteration count is
+a tunable budget; in the spirit of starting simple we cap it, warm-start each frame from the
+previous solution (frame-to-frame change is small for a tracking filter), and raise the cap only if
+the gain-block NIS indicates under-convergence. The normalised innovation (NIS) formed here is logged
+as the whiteness diagnostic~\cite{kailath} of Section~\ref{sec:nis}, but---per
+Section~\ref{sec:statespace}---is never fed back to adapt the driving variances.
+
+\subsection{Robust update via a heavy-tailed likelihood}
+\label{sec:robust}
+
+The Gaussian observation model of Section~\ref{sec:obs} is fragile: a baseline contaminated by an
+un-catalogued source or by radio-frequency interference (RFI) is a gross outlier that, under a
+Gaussian likelihood, would bias every gain and flux. We replace the Gaussian by a Student-$t$~\cite{studentt}
+observation density, which has the Gaussian scale-mixture representation
+\begin{equation}
+  t_\nu(\bm{e}\given \bm 0,\bm{R}) = \int_0^\infty \Norm(\bm{e}\given\bm 0,\bm{R}/\lambda)\,
+  \mathrm{Gamma}\!\big(\lambda\given\tfrac\nu2,\tfrac\nu2\big)\,\dd\lambda,
+\end{equation}
+in which the latent per-baseline precision scale $\lambda_{pq}$ down-weights discrepant data.
+Treating $\{\lambda_{pq}\}$ by expectation--maximisation (equivalently, one variational step) gives
+an iteratively reweighted least squares (IRLS) update: at Gauss--Newton iteration $j$ each baseline
+carries a weight
+\begin{equation}
+  w_{pq}^{(j)} = \frac{\nu+n_y}{\nu + \epsilon_{pq}^{(j)}},
+  \qquad
+  \epsilon_{pq}^{(j)} = \bm{e}_{pq}^{(j)\,\T}\,\bm{R}_{pq}^{-1}\,\bm{e}_{pq}^{(j)},
+\end{equation}
+with $n_y=2$ for the stacked real/imag residual, and the EKF normal equations are assembled with the
+reweighted observation precision $w_{pq}\bm{R}_{pq}^{-1}$. Inliers keep $w_{pq}\!\approx\!1$;
+outliers are smoothly suppressed. The degrees-of-freedom $\nu$ is fixed (a small value, $\nu\sim4$,
+is robust) rather than inferred, again to avoid the coupling of Section~\ref{sec:statespace}.
+Two caveats. First, with only $n_y=2$ degrees of freedom per baseline, $\epsilon_{pq}$ is a noisy
+($\chi^2_2$-like) statistic and the weights themselves chatter from frame to frame even on clean
+data; this is standard and largely harmless for the gain solution, but it argues against pushing
+$\nu$ much below 4, where the weight function steepens and the chatter amplifies. Second, and
+critically: the IRLS weights are \emph{internal to the calibration update} and must, under no
+circumstances, propagate into the imaging weights of Section~\ref{sec:imaging}. A genuine transient
+is an un-catalogued coherent source---exactly what the Student-$t$ machinery down-weights to protect
+the gains. That protection is correct for calibration, but if the same weights were applied when
+imaging the residuals, the pipeline would partially subtract its own science signal. The imaging
+weights are the (gain-corrected) thermal weights only.
+
+\begin{remark}[Two failure modes of an incomplete catalogue]
+Robustness here and flux handling in Section~\ref{sec:flux} address \emph{different} symptoms of
+catalogue incompleteness, and both are needed:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Present but un-catalogued} sources have no position, hence no $X_{pq,s}$, and cannot
+        be modelled; they appear as heavy-tailed outliers and are handled \emph{only} by the
+        Student-$t$ down-weighting. Note that a bright transient---the very thing the downstream
+        detector exists to find---falls in this class \emph{by design}: the down-weighting protects
+        the gain solution during the event, while the signal itself flows through unattenuated in
+        the residual stream (the imaging-weight firewall above) and additionally announces itself
+        as a coherent multi-baseline NIS excess (Section~\ref{sec:notes}).
+  \item \textbf{Catalogued but absent} sources do have an $X_{pq,s}$ but no real emission; they are
+        handled by driving their flux state to zero (Section~\ref{sec:flux}).
+\end{itemize}
+\end{remark}
+
+\subsection{Rao--Blackwellised flux update and warm-up}
+\label{sec:flux}
+
+Conditioned on the gains, the model \eqref{eq:model} is \emph{linear} in the fluxes: with $g_p,g_q$
+fixed, $\hat V_{pq}=\sum_s A_s\,(g_p X_{pq,s} g_q^{\ast})$. Partition the state into the nonlinear
+gains $\bm{x}_g=\{a_p,\psi_p\}$ and the linear fluxes $\bm{x}_A=\{A_s\}$. The joint predicted density
+is Gaussian (block-diagonal, the IWPs being independent) and the flux-conditional posterior
+$p(\bm{x}_A\given\bm{x}_g,V_k)$ is exactly Gaussian---we keep the flux block \emph{unconstrained}
+precisely to preserve this exactness (see below). We therefore eliminate $\bm{x}_A$ analytically: rather than sampling or jointly
+Newton-stepping them, we marginalise them in closed form via the Schur complement of the
+(reweighted) normal-equations matrix, so the gain update sees the fluxes integrated out with their
+full uncertainty, and the flux posterior is recovered by back-substitution. This is an exact
+Gaussian marginalisation of the linear block (a Rao--Blackwell-\emph{style} variance reduction
+achieved by conditioning, but without Monte Carlo---there is a single point estimate of the gains,
+not a particle ensemble, so the term is used only by analogy). It lowers the variance of the gain
+estimate and confines the per-frame nonlinear solve to the $2P$-dimensional gain block. Because the
+flux block is an unconstrained symmetric positive-definite system, its solve (and the
+back-substitution) can use a plain conjugate-gradient iteration warm-started from the previous
+frame's fluxes---no active-set or constrained-QP machinery anywhere in the per-frame path, which is
+also what keeps the update a fixed sequence of dense linear-algebra primitives amenable to a GPU
+implementation.
+
+\paragraph{Non-negativity.} A physical flux satisfies $A_s\ge0$, but we deliberately do \emph{not}
+impose this as a constraint on the filter state. The primary strategy is: the flux block stays
+fully Gaussian and unconstrained---so the Schur marginalisation above remains exact and the filter
+recursion never branches---and non-negativity is applied only at the point of \emph{use}, by
+clipping when the subtraction model is formed,
+\begin{equation}
+  \hat M_{pq}=\sum_s \max\!\big(\hat A_s,\,0\big)\,X_{pq,s}.
+\end{equation}
+A genuinely absent source then behaves as follows: with a zero-mean initialisation, the small
+post-warm-up $\sigma_A^2$, and no likelihood gradient pulling it up, its flux estimate hovers in a
+small noise-level band around zero; the clip simply prevents the negative excursions of that band
+from being \emph{added} to the data through the subtraction. Nothing the detector consumes is
+affected, the state remains exactly Gaussian, and there is no active-set bookkeeping to maintain or
+to break. (Earlier drafts imposed the constraint on the state itself via non-negative least squares
+with a moment-matched truncated-Gaussian posterior. That machinery is statistically tidier but
+operationally the most fragile component of the design---stateful branching as sources rise, set,
+and cross the boundary---and it destroys the exactness of the marginalisation. It is retained only
+as a fallback, to be revisited if offline replay shows material leakage that clipping does not
+control.) Should residual leakage into absent sources be observed, the first escalation is not the
+hard constraint but a mild $\ell_1$ (LASSO-style proximal) shrinkage on $\bm{x}_A$, which supplies
+\emph{active} suppression while keeping the update simple; we start without it and add it only if
+needed.
+
+\paragraph{Warm-up schedule.} At acquisition the fluxes are unknown and the gains are not yet
+locked, so we initialise every flux at mean zero with a diffuse covariance and run the flux driving
+variance $\sigma_A^2$ \emph{large}, letting the data raise the fluxes of sources that are truly
+present. As the filter converges---monitored via the settling of the gain-block NIS rather than a
+fixed frame count---$\sigma_A^2$ is annealed down to the realistic floor calibrated offline
+(Section~\ref{sec:hyper}); an exponential schedule is the fallback. Because a large warm-up
+$\sigma_A^2$ also lets noise excite \emph{absent} sources (which then freeze when the variance
+tightens), the zero-mean initialisation, the small post-warm-up driving variance, and the
+Student-$t$ weights together bias those fluxes back down, with the subtraction-time clip and the
+optional $\ell_1$ escalation above as the backstops.
+
+\subsection{Calibrated residuals and all-sky imaging}
+\label{sec:imaging}
+
+\paragraph{Two coordinate frames, one rotation.} TART points at zenith and does not
+track: there is no moving phase centre and no fringe stopping, and \emph{calibration} therefore
+lives most naturally in a single fixed local east--north--up (ENU) frame---the catalogue returns
+source directions in azimuth/elevation, the satellites move in this frame, and the raw geometric
+phase $\bm{b}\cdot\hat{\bm{s}}$ is used throughout, with no $(n-1)$ reference term. \emph{Detection},
+however, must live on a sidereally \emph{fixed} sky: in the local frame every steady celestial
+source drifts through degree-scale pixels in minutes and would masquerade as a slow transient
+(Section~\ref{sec:frame}). The two requirements are reconciled with \emph{no resampling step}
+because the imaging operator is a gridless DFT. Define the HEALPix grid \emph{once, in equatorial
+coordinates}, and precompute its pixel unit vectors $\hat{\bm{s}}_j$ via \texttt{pix2vec}. The
+per-frame geometry then enters entirely through the baselines, since
+$\bm{b}\cdot\big(\bm{C}(t)\,\hat{\bm{s}}_j\big)=\big(\bm{C}(t)\T\bm{b}\big)\cdot\hat{\bm{s}}_j$:
+rotating the $\sim$276 ENU baseline vectors by the $3\times3$ direction-cosine matrix
+$\bm{C}(t)$---the constant latitude tilt composed with the rotation about the polar axis by local
+sidereal time (LST); precession/nutation is far below TART's resolution---evaluates the map
+\emph{natively} on the fixed equatorial grid, with zero interpolation, zero smearing beyond what is
+already in the data, and identical cost. (``Zenith-pointing, no fringe stopping'' constrains the
+\emph{phase} convention of the data, not the frame of the image.)
+
+\paragraph{Full-sky imaging and a common phase centre.} We image the \emph{entire} equatorial
+sphere---every HEALPix pixel, allocated once---rather than masking to an above-horizon subset, and
+the rotated baselines $\bm{C}(t_k)\T\bm{b}^{\mathrm{enu}}_{pq}$ give every frame a \emph{common},
+sidereally fixed phase centre. A steady source then occupies one pixel for all time and the map of
+one frame is directly comparable, pixel-for-pixel, with the next. This deliberately supersedes the
+earlier above-horizon-mask design: the configurable minimum-elevation cut $\mathrm{el}_{\min}$ and
+the hard pixel mask $\mathcal{M}_k$ are \emph{dropped}---there is no $\mathrm{el}_{\min}$ anywhere in
+the pipeline. What localises a single array's sensitivity to its own sky is the antenna
+\emph{primary beam}: an elevation-dependent response that falls smoothly to zero towards the horizon
+and enters as a per-pixel multiplicative weight, not a threshold. The primary-beam model is the
+subject of an ongoing student project (Section~\ref{sec:imaging}) and is not yet applied; until it
+lands, below-horizon pixels of a single station simply carry no usable signal (only PSF sidelobe
+leakage and noise), and the detector's $\Delta$-exact gap machinery (Section~\ref{sec:frame})
+absorbs those low-sensitivity stretches exactly, as before. The only conceptual change is that the
+visibility ``gaps'' are now governed by the physical horizon and the beam, not by a tunable cut. As
+a pure compute optimisation a single station still evaluates only the currently above-horizon pixels
+(one dot product $\hat{\bm{s}}_j\cdot\hat{\bm{z}}^{\mathrm{eq}}(t_k)$ per pixel, with
+$\hat{\bm{z}}^{\mathrm{eq}}(t)=\bm{C}(t)\T\,\hat{\bm{z}}^{\mathrm{enu}}$, sliding at the sidereal rate
+$0.25^\circ$/min)---but this is a gather over the full allocated grid, not a science-driven mask.
+
+\paragraph{Future extension: global mosaicing.} Fixing the grid in equatorial coordinates with a
+common phase centre makes a powerful extension natural: the full-sky maps of \emph{all} TART
+stations worldwide can be combined into a single all-sky mosaic, each station contributing the part
+of the sphere it sees, weighted by its primary beam, so every equatorial pixel is covered by
+whichever station(s) see it best and the per-station below-horizon caps are filled by others rather
+than left empty. This mosaicing \emph{requires} a per-station primary-beam estimate (the same model
+deferred above) to weight and stitch the overlapping contributions correctly. It is recorded here as
+a design target, not implemented in this phase.
+
+The conventions pinned once are: azimuth zero/handedness, the
+ENU axis assignment, that $\bm{b}^{\mathrm{enu}}_{pq}$ lives in the ENU frame, the realisation of
+the equatorial frame (current-epoch, referenced through LST from the reader timestamps that define
+$\bm{C}(t_k)$), and the HEALPix ordering (NESTED, for index locality). A local zenith-frame grid is
+retained only as an optional diagnostic view. Within-integration rotation smearing is a property of
+the \emph{data}, identical in either frame, and negligible for seconds-level integrations at degree
+resolution.
+
+\paragraph{Coherencies from the catalogue.} The satellite catalogue gives positions (from broadcast
+ephemerides / two-line elements), not fluxes. For source $s$ with time-dependent direction cosines
+$\hat{\bm{s}}_s(t)=(l_s,m_s,n_s)$ and baseline $\bm{b}_{pq}=(u_{pq},v_{pq},w_{pq})$, the unit
+coherency is the geometric fringe
+\begin{equation}
+  X_{pq,s}(t)=\exp\!\Big(2\pi\imath\,\tfrac{\nu}{c}\,\bm{b}_{pq}\cdot\hat{\bm{s}}_s\Big)
+  =\exp\!\Big(2\pi\imath\,\tfrac{\nu}{c}\,\big[u_{pq}l_s+v_{pq}m_s+w_{pq}n_s\big]\Big),
+  \qquad n_s=\sqrt{1-l_s^2-m_s^2}.
+\end{equation}
+Satellites in medium Earth orbit move appreciably over minutes, so $X_{pq,s}$ is recomputed every
+frame from the propagated positions; the motion is in fact helpful, modulating each source's fringe
+and so aiding the flux/gain separation (the geostationary minority move little and are
+correspondingly harder to separate from the gains). The motion has, however, a second consequence
+that the flux model must own: the IWP tracks the \emph{apparent} flux $A_s(t)$, which is the
+intrinsic emission multiplied by the antenna element gain pattern and by the satellite's own
+transmit pattern, both of which change with the source's elevation---i.e.\ on the same
+minute time-scales as the orbit. This is a fast, largely \emph{deterministic} trend, not slow
+stochastic drift, and a $\sigma_A^2$ frozen at a value fitted to ``intrinsic'' variability will lag
+it systematically; lag error multiplied by a $10^5$--$10^7$~Jy source is precisely the
+residual-sidelobe contamination Section~\ref{sec:notes} warns about. The clean mitigation is to
+factor the deterministic part out, $A_s(t)=E\big(\mathrm{el}_s(t)\big)\,\tilde A_s(t)$, with
+$E(\mathrm{el})$ a static (azimuthally averaged) element-beam model fitted once offline---a
+per-source scalar multiplying $X_{pq,s}$, essentially free at runtime---so the IWP tracks only the
+genuinely stochastic factor $\tilde A_s$. An approximate TART element-beam model is the subject of
+an ongoing student project and this factorisation is therefore \emph{left as future work}; until it
+lands, the offline fit of $\sigma_A^2$ (Section~\ref{sec:hyper}) must be performed on apparent-flux
+tracks so that the floor is set high enough to follow the beam-induced trend, accepting the
+attendant loss of flux/gain separability, and the bright-source masking of Section~\ref{sec:notes}
+carries the residual risk. The coordinate pipeline (ephemeris propagation,
+ECEF$\to$topocentric az/el$\to$direction cosines, horizon masking) is the natural place to reuse TART
+community code (Section~\ref{sec:notes}); note that two-line-element accuracy ($\sim$km at MEO,
+i.e.\ tens of arcseconds) is utterly negligible against TART's degrees-wide point-spread function,
+so precise post-processed ephemerides are not required.
+
+\paragraph{Fixed-lag smoothing for subtraction.} The filtered estimate $\hat{\bm{x}}_{k|k}$ lags
+the true state by construction, and for the slowly varying amplitudes that lag is the dominant
+subtraction error once the gauge and beam issues above are handled. Smoothing repairs it cheaply: a
+fixed-lag Rauch--Tung--Striebel (RTS) pass over a short window turns the causal estimate into
+$\hat{\bm{x}}_{k-L|k}$, conditioned on $L$ frames of future data. Concretely, the calibration
+operator maintains a ring buffer of the last $L{+}1$ frames' predicted and filtered moments
+$\{\hat{\bm{x}}_{j|j-1},\bm{P}_{j|j-1},\hat{\bm{x}}_{j|j},\bm{P}_{j|j},\bm{F}_j\}$ (the $\bm{F}_j$
+stored per frame because $\Delta_j$ varies; Section~\ref{sec:statespace}); on receipt of frame $k$
+it runs the standard backward recursion
+\begin{equation}
+  \bm{G}_j=\bm{P}_{j|j}\,\bm{F}_{j+1}\T\,\bm{P}_{j+1|j}^{-1},\qquad
+  \hat{\bm{x}}_{j|k}=\hat{\bm{x}}_{j|j}+\bm{G}_j\big(\hat{\bm{x}}_{j+1|k}-\hat{\bm{x}}_{j+1|j}\big),
+\end{equation}
+from $j=k-1$ down to $j=k-L$, and emits the residual for frame $k-L$ using the \emph{smoothed} gains
+and (clipped) fluxes in \eqref{eq:resid}. The filtered quantities retain their roles---warm-starting
+the next frame's iterated update and feeding the NIS diagnostics, which are innovations-based and
+therefore inherently causal. The costs are explicit: $O(L)$ extra state memory, an $O(L\,n^3)$
+backward pass per frame ($n=\dim\bm{x}$; trivial at TART scale, and for larger arrays $\bm{F}$ is
+block-diagonal so the only dense work is in the $\bm{P}$ products), and---the one that matters---a
+latency of $L$ frames added to the residual stream and hence to detection. At TART's seconds-level
+cadence a default of $L=1$--$2$ is a negligible price; $L$ is a configuration item, with $L=0$
+recovering the pure filter for latency-critical deployments.
+
+\paragraph{Gain-corrected residual visibilities.} After the smoothing pass the filter forms the model
+$\hat M_{pq}=\sum_s\max(\hat A_s,0)\, X_{pq,s}$ from the smoothed estimates and emits, per baseline,
+the gain-corrected, model-subtracted residual together with its corrected weight,
+\begin{equation}
+  R_{pq}=\hat g_p^{-1}\,V_{pq}\,\hat g_q^{-\ast}-\hat M_{pq},
+  \qquad
+  w^{\mathrm{corr}}_{pq}=w_{pq}\,\lvert \hat g_p\hat g_q\rvert^{2}.
+  \label{eq:resid}
+\end{equation}
+Here $w_{pq}$ is the \emph{thermal} weight---never the IRLS weight of Section~\ref{sec:robust},
+which is internal to calibration (a transient is exactly what IRLS down-weights, and propagating
+those weights into the imaging would partially subtract the science signal). TART data carry no
+per-visibility thermal weights, and the antennas are very nearly identical, so we assume i.i.d.\
+noise: a single constant $w_{pq}=1/\sigma_n^2$, with $\sigma_n^2$ estimated once, offline, from a
+large batch of archived data alongside the driving variances (Section~\ref{sec:hyper}). Working in
+the gain-corrected (sky) frame puts the residual on a consistent \emph{relative}
+(self-calibrated) flux scale with a well-characterised noise variance---the basis for the per-frame
+variance $R_k$ the detector consumes (made precise below). By construction $R_{pq}$ has the same
+layout as a raw visibility, so the downstream imager need not know that calibration occurred.
+
+\paragraph{HEALPix imaging (default: dirty map).} The default residual map is the adjoint
+(gridless) DFT of $R_{pq}$ evaluated at the currently visible \emph{equatorial} HEALPix pixel
+centres~\cite{healpix}. On an \emph{equal-area} grid the solid-angle element is constant, so there
+is \emph{no} $1/n$ Jacobian (that factor belongs only to the $dl\,dm$ tangent-plane element); and
+with no fringe stopping the phase is the raw geometric term, now with the rotated baselines:
+\begin{equation}
+  I_k(\hat{\bm{s}}_j)=\frac{1}{\sum_{pq} w^{\mathrm{corr}}_{pq}}\,\mathrm{Re}\!\sum_{pq}
+  w^{\mathrm{corr}}_{pq}\,R_{pq}\,
+  \exp\!\Big(\!-2\pi\imath\,\tfrac{\nu}{c}\,\bm{b}_{pq}(t_k)\cdot\hat{\bm{s}}_j\Big),
+  \qquad
+  \bm{b}_{pq}(t_k)=\bm{C}(t_k)\T\,\bm{b}^{\mathrm{enu}}_{pq}.
+\end{equation}
+The dirty map is \emph{always} normalised by the sum of the (gain-corrected) weights
+$\sum_{pq} w^{\mathrm{corr}}_{pq}$. This is not merely cosmetic radiometry: $w^{\mathrm{corr}}_{pq}
+=w_{pq}\lvert\hat g_p\hat g_q\rvert^2$ drifts frame-to-frame with the evolving gains and jumps
+whenever baselines are flagged in or out (e.g.\ a dead antenna returning), so an \emph{un}-normalised
+adjoint would imprint that drift as a multiplicative common-mode signal on \emph{every} pixel light
+curve---exactly the slow coherent drift a stiff detector model would alarm on. Dividing by
+$\sum w^{\mathrm{corr}}_{pq}$ removes it, and the per-pixel detector variance $R_k$ is propagated
+through the same normalisation. (The Tikhonov map below needs no such ad-hoc factor: it is a proper
+weighted least-squares solve and already carries both the correct flux scale and a principled
+per-pixel covariance.) This is the natural representation for a zenith-pointing instrument that sees
+most of the hemisphere (a single tangent plane breaks down at large zenith angle), and it delivers
+the per-pixel light curves on a \emph{fixed sky}: each equatorial pixel accumulates a light curve
+with gaps while it is below the horizon, which is exactly the input contract of the Stage-2 detector
+(Section~\ref{sec:frame}). The existing tiled $(l,m)$ DFT operator is a structural template for the
+per-pixel phase evaluation and memory tiling, but the radiometric normalisation is re-derived for
+the equal-area grid rather than ported---in particular the $1/n$ and $(n-1)$ factors are dropped.
+The dirty map's noise is correlated between pixels through the point-spread function (PSF), and
+$\{w^{\mathrm{corr}}_{pq}\}$ gives only the per-pixel variance (the diagonal); the inter-pixel
+correlation is addressed by the spatial confirmation stage of Section~\ref{sec:spatial} and,
+optionally, by the Tikhonov mode below.
+
+\paragraph{HEALPix imaging (optional: Tikhonov map).} As a higher-fidelity, more resource-hungry
+alternative, the residual can be reconstructed by Tikhonov-regularised least squares rather than the
+bare adjoint,
+\begin{equation}
+  \hat{\bm{I}}_k=\big(\bm{A}_k^{\!*}\bm{W}\bm{A}_k+\mu\bm{\Gamma}\big)^{-1}\bm{A}_k^{\!*}\bm{W}\bm{R},
+\end{equation}
+with $\bm{A}_k$ the HEALPix DFT operator built from the rotated baselines $\bm{b}_{pq}(t_k)$,
+$\bm{W}=\mathrm{diag}\{w^{\mathrm{corr}}\}$, and $\mu\bm{\Gamma}$ the regulariser ($\bm{\Gamma}=\bm{I}$,
+or a smoothing operator). This is the DiSkO~\cite{disko} reconstruction and buys three things the
+dirty map lacks: a sampling-density-corrected point-source response (so a fixed detection threshold
+means the same thing across the sky), a partially decorrelated noise field, and---most usefully for
+the detector---the posterior covariance $(\bm{A}_k^{\!*}\bm{W}\bm{A}_k+\mu\bm{\Gamma})^{-1}$, whose
+diagonal furnishes a principled per-pixel $R_k$. It does not \emph{fully} whiten (the Gram inverse
+is not diagonal for a sparse array), so the look-elsewhere caveats of Section~\ref{sec:arl} are
+reduced, not removed. Because this per-pixel $R_k$ scales with the regulariser, $\mu$ (and the
+choice of $\bm{\Gamma}$) must itself be calibrated offline and \emph{frozen}, just as the driving
+variances are (Section~\ref{sec:hyper}): a per-frame retuning of $\mu$ would make the detector's
+per-pixel noise scale---and hence its false-alarm rate---drift between frames. Cost is one linear
+solve per frame. $\bm{A}_k$ is no longer constant (the baselines rotate beneath the fixed grid),
+but the equatorial frame supplies something better: consecutive \emph{solutions} are nearly
+identical, since the sky barely moves between frames, so a matrix-free conjugate-gradient solve
+warm-started from the previous frame's map converges in a handful of iterations, with the Gram
+operator drifting only at the slow uv-rotation and gain-weight rates. A pre-factorisation of
+$\bm{A}_k^{\!*}\bm{W}\bm{A}_k$ is deliberately \emph{not} used: $\bm{W}$ drifts with the gains and
+$\bm{A}_k$ with the Earth, and a stale factor silently biases both the map and---worse---the
+per-pixel $R_k$ the detector's false-alarm calibration rests on. We default to the dirty map and
+enable the Tikhonov mode where resources allow; running both against DiSkO is also our imaging
+validation.
+
+\subsection{Offline calibration of the driving variances}
+\label{sec:hyper}
+
+The driving variances are estimated once, offline, from the existing body of data reductions and then
+frozen for the online filter. The same offline fit also supplies the antenna amplitude means that
+seed the filter initialisation (re-centred on the reference antenna, whose elimination---not these
+means---fixes the gauge; Sections~\ref{sec:statespace},~\ref{sec:obs}), and the single thermal noise
+variance $\sigma_n^2$ that defines the constant i.i.d.\ visibility weights of
+Section~\ref{sec:imaging}: TART supplies no per-visibility weights, so $\sigma_n^2$ is estimated
+from a large batch of archived data, e.g.\ from the scatter of high-cadence differenced post-fit
+residuals on well-calibrated stretches (differencing adjacent frames cancels the slowly varying sky
+and gain contributions, leaving $2\sigma_n^2$). The
+correct estimator treats an offline solution track as \emph{noisy} observations of the latent IWP and
+maximises the IWP-plus-observation-noise marginal likelihood (the prediction-error decomposition of Section~\ref{sec:evidence}) jointly for $\sigma_\theta^2$ and the solution-noise level. A tempting shortcut---matching
+the empirical increment variance, $\theta^{(q)}_k-\theta^{(q)}_{k-1}\sim\Norm\!\big(0,\sigma_\theta^2\,g(\Delta_k)\big)$
+with $g(\Delta)$ the relevant entry of $\bm{Q}_\theta(\Delta)$---is \emph{biased high}, because
+differencing noisy estimates adds twice the solution-noise variance to the increment variance; it is
+useful only as an initial guess for the marginal-likelihood fit. The same procedure on offline flux
+solutions sets the post-warm-up floor of $\sigma_A^2$---fitted on \emph{apparent}-flux tracks, so
+that the floor is high enough to follow the beam-induced elevation trend of
+Section~\ref{sec:imaging} until the element-beam factorisation lands. Fixing these values assumes their stationarity
+across observations; this is reasonable for the amplitude tracks but should be checked for the phases,
+which can follow temperature/ionosphere---if they vary materially, a small set of regime presets (e.g.
+day/night) is preferable to a single global $\sigma_\psi^2$. The fitter is a small offline utility
+emitting a frozen hyperparameter configuration; it never runs inside the streaming pipeline.
+
+\paragraph{Solution cadence of the offline tracks.} The existing TART reductions supply gain and
+flux solutions at a \emph{coarse} solution interval---of order one minute (in the validation
+archive, one solution snapshot per one-minute file). For the \emph{slow} groups this is adequate:
+the log-amplitudes ($\sigma_a^2$) and the source fluxes ($\sigma_A^2$) vary little within a minute,
+so fitting their driving variances to these tracks is not materially aliased, and the same tracks
+give the amplitude means used for initialisation. The faster gain \emph{phases} are the exception:
+at a one-minute interval the phase increments are aliased and $\sigma_\psi^2$ cannot be identified
+reliably from the archival solutions. Where a higher-resolution estimate is required we are not
+restricted to those solutions---we can run StEFCal ourselves on the archived \emph{raw}
+visibilities at their native ($\sim$1~s) cadence and fit $\sigma_\psi^2$ to the resulting
+high-cadence phase tracks. The coarse archival solutions remain perfectly good for the slow groups
+and for the amplitude-mean initialisation.
+
+\subsection{Implementation notes}
+\label{sec:notes}
+
+The pipeline is realised as a streaming graph of separate operators---reader $\to$ sky-model $\to$
+calibration $\to$ imaging $\to$ writer---so each stage has a single responsibility and can be tested
+in isolation:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Sky-model operator} computes $X_{pq,s}(t)$ from the catalogue and the per-frame
+        geometry. TART is single-polarisation, so one scalar coherency per source/baseline suffices.
+        The ephemeris/coordinate logic can be borrowed from TART community code (the
+        \texttt{tart-telescope} organisation; T.~Molteno's \textsc{disko} for HEALPix imaging, and
+        \textsc{spotless}---whose exact role should be confirmed before relying on it, as it appears
+        to be an image-domain matching-pursuit deconvolver rather than a visibility-domain
+        subtractor)~\cite{disko}, with \texttt{sgp4}/\texttt{skyfield} as the standard,
+        well-tested route for TLE propagation and the ECEF$\to$topocentric chain (TLE accuracy is
+        ample here; Section~\ref{sec:imaging}). Those are host/NumPy implementations---we
+        re-implement the per-frame kernels as GPU (CuPy) operators rather than calling them at
+        runtime, but they remain the validation oracle for the coordinate conventions.
+  \item \textbf{Calibration operator} is stateful (it carries the filter mean/covariance, the gauge,
+        the warm-up schedule, and the fixed-lag smoother's ring buffer of per-frame moments across
+        frames), owns the subtraction, and emits the gain-corrected
+        residuals \eqref{eq:resid} plus a solutions side-stream (gains, fluxes, NIS) for diagnostics
+        and for the offline hyperparameter fit. It also owns the reference-antenna failover of
+        Section~\ref{sec:statespace}: on reference-antenna flagging it resets and re-acquires with
+        the next antenna in the configured failover order, raising a monitoring alert.
+  \item \textbf{Imaging operator} is a new HEALPix DFT operator, structured after the existing tiled
+        $(l,m)$ operator, consuming residuals in the raw-visibility layout together with their timestamps, from which it forms the frame rotation $\bm{C}(t_k)$, rotates the baselines, and maintains the fixed full-sky equatorial pixel set together with the per-frame above-horizon index set it gathers over (Section~\ref{sec:imaging}).
+  \item \textbf{Reader.} For this phase the reader ingests the TART one-minute HDF visibility chunks
+        (the format of the validation archive) and converts them \emph{up front} into a single
+        canonical, MSv4-compliant \texttt{xarray} dataset (the \texttt{read\_tart\_hdf} utility), so
+        every downstream operator consumes one well-defined layout regardless of the source format;
+        the existing MSv4 reader supplies that schema as the structural template. Whatever the
+        format, the reader must propagate per-frame timestamps: no downstream stage may assume a
+        constant $\Delta$ (Section~\ref{sec:statespace}). A \emph{fully streamed} deployment is
+        deliberately out of scope for now, but its requirements are recorded so they are not designed
+        out: (i) the live ingest source is the TART per-integration API endpoint, not minute-batched
+        HDF files, so the genuine end-to-end latency floor is the integration cadence ($\sim$1~s)
+        plus the smoother lag $L$---\emph{not} the 60~s HDF chunking used here; (ii) the live API
+        snapshot carries only visibilities and a timestamp, so array configuration, antenna
+        positions, and any existing gain solutions must arrive on a side channel; and (iii) the
+        ingest format and timestamp contract must be frozen with the TART operators (a Stage-4 action
+        item). Until then the HDF path is sufficient to build and validate the entire pipeline.
+  \item \textbf{Validation and monitoring.} The dominant source of spurious transients is not thermal
+        noise but \emph{imperfect subtraction}: residual sidelobes from a bright satellite or the Sun,
+        produced by gain/flux error times a $10^5$--$10^7$~Jy source, spray across the sparse-array
+        PSF. We monitor subtraction quality and mask or down-weight pixels near bright sources, but
+        the masking logic must discriminate between two causes of a NIS excursion. A NIS excess
+        \emph{localised near catalogued bright sources} indicates poor subtraction lock and is
+        masked. A NIS excess that is \emph{coherent across many baselines but not associated with
+        any catalogued source} is the calibration-side signature of an un-modelled coherent
+        emitter---i.e.\ a candidate transient---and must be routed to the detector as corroborating
+        evidence, \emph{never} used to mask the epoch: a rule that masks all epochs of elevated NIS
+        is a transient suppressor. For
+        correctness we validate against independent implementations: gain tracks against TART's
+        existing GNSS self-calibration (Scheel/Molteno), the imaging operator against \textsc{disko}
+        on the same archived observation, and the hand-coded CuPy Jacobian against a JAX reference by
+        finite-difference/autodiff gradient check.
+\end{itemize}
+The numerical backend is CuPy throughout, which also lets the calibration and imaging operators
+exchange GPU buffers with the existing CuPy/Holoscan tensors at zero copy. Because the calibration
+Jacobian is structured (antenna-bipartite gains, dense flux block), the production update is hand-coded
+structured linear algebra rather than a high-level autodiff framework; a JAX reference implementation
+of the same update is maintained for prototyping and as the gradient-check oracle noted above.
+
+\section{Stage 2: sequential transient detection}
+\label{sec:stage2}
+
+We observe, at each \emph{equatorial-grid} sky pixel (Section~\ref{sec:frame}), a scalar light
+curve $\{y_k\}$ sampled at the frame times $t_k$ at which that pixel is visible, where $y_k$ is the
+calibrated, source-subtracted pixel flux from the Stage-1 residual maps and $R_k$ its per-pixel
+variance from the Stage-1 weights. In the absence of a transient the light curve is a slowly
+varying ``quiescent'' signal plus measurement noise. A \emph{transient} is a temporary additive
+flux excess $a_k$ that switches on at an unknown time $t_0$ and persists for an unknown duration
+with unknown amplitude and shape.
+
+The detector has five layers:
+\begin{enumerate}[leftmargin=*]
+  \item A \emph{generative quiescent model} (Section~\ref{sec:iwp}): the light curve is an
+        integrated Wiener process observed in noise---``what normal looks like''---with a
+        principled, recursive predictor.
+  \item A \emph{whitening transform} (Section~\ref{sec:kf}): the Kalman filter turns the correlated
+        light curve into independent, unit-variance \emph{innovations} under the quiescent model.
+        Detection reduces to testing whether those innovations remain zero-mean.
+  \item A \emph{sequential test} (Section~\ref{sec:seqdet}): CUSUM / GLR statistics accumulate the
+        signed innovation evidence and raise an alarm when it crosses a calibrated threshold,
+        while remaining primed for a change at any future time. A bank of quiescent models at
+        different stiffnesses (Section~\ref{sec:bank}) gives sensitivity across transient
+        time-scales, in the manner of a multi-scale matched filter.
+  \item A \emph{spatial confirmation} stage (Section~\ref{sec:spatial}): at alarm time, the
+        snapshot innovation \emph{map} is tested against the PSF---a real point-source transient
+        must look like the PSF, and calibration artifacts look like the sidelobes of catalogued
+        sources.
+  \item \emph{Kinematic and catalogue vetoes} (Section~\ref{sec:veto}): candidates that move in
+        the equatorial frame, or match a propagated satellite track, are routed out of the
+        astrophysical stream.
+\end{enumerate}
+Layers 1--3 are the cheap, always-on, per-pixel trigger; layers 4--5 run only at alarms. Everything
+in this stage is model-based and rule-based; machine learning enters only in Stage 3, strictly
+downstream of the alarms.
+
+\subsection{The detection frame and the rise--set duty cycle}
+\label{sec:frame}
+
+\paragraph{Why the local frame is unusable for detection.} In the zenith ENU frame every steady
+celestial source drifts through the pixel grid at the sidereal rate: at $\mathrm{nside}=64$
+($\sim\!0.9^\circ$ pixels) a source crosses a pixel in $\sim$3--4 minutes. The Galactic plane, the
+quiet Sun, and every bright steady source would therefore masquerade as slow transients in every
+pixel they touch, at exactly the time-scales the stiff models of the bank are tuned to catch.
+Detection requires per-pixel light curves that are statistically quiescent under $H_0$, and that is
+only true on a sidereally fixed grid.
+
+\paragraph{The equatorial grid is native, not derived.} Because Stage 1 images by rotating the
+baselines onto a fixed equatorial HEALPix grid (Section~\ref{sec:imaging}), the detector receives
+sidereally fixed pixel light curves directly---there is no per-frame map rotation, regridding, or
+interpolation anywhere in the pipeline. A steady source occupies one pixel forever; its light curve
+is a smooth rise--set envelope (elevation-dependent element response), which is exactly the slow
+quiescent behaviour the IWP is built to track, and which the LST-conditioned template of
+Section~\ref{sec:prac} can largely remove.
+
+\paragraph{Duty cycles and gap semantics.} Each equatorial pixel is visible from a given station for
+a site- and declination-dependent fraction of the sidereal day (circumpolar pixels always;
+equatorial pixels part of the day; the opposite polar cap never from a single station---though under
+the global-mosaic extension of Section~\ref{sec:imaging} another station fills it). The full sphere
+is allocated regardless (Section~\ref{sec:imaging}); a pixel's filter updates only while that pixel
+is above the station's horizon. Across a below-horizon gap of length
+$\Delta$, the predict step applies the exact $\bm{A}(\Delta),\bm{Q}(\Delta)$: the covariance
+inflates by the accumulated process noise, $S_k$ is large at rise, the first innovations carry
+appropriately little weight, and sensitivity recovers as the filter re-locks. Re-acquisition is
+thus \emph{derived, not scheduled}---it is the same mechanism as filter initialisation, and it is
+why the no-constant-$\Delta$ rule of Section~\ref{sec:statespace} is load-bearing for the detector,
+not just for calibration. For the sequential statistics we adopt the simplest defensible semantics
+in the first implementation: \emph{freeze} $g_k$ and the GLR ring buffers while the pixel is below
+the horizon and resume on rise, with durations counted in observed samples. Freezing makes
+per-pixel $\mathrm{ARL}_0$ mildly heterogeneous across declinations; the empirical threshold
+calibration of Section~\ref{sec:arl}, performed on real residual maps, inherits the same duty
+cycles and absorbs this automatically.
+
+\paragraph{State and cost.} At $\mathrm{nside}=64$ the full equatorial sphere is
+$12\,\mathrm{nside}^2\approx4.9\times10^4$ pixels, all allocated (Section~\ref{sec:imaging}); a
+single station contributes signal to roughly half of them at any instant, so each frame updates the
+$\sim$40--50\% then above its horizon. The Kalman moments are cheap---means and covariances are
+$O(q{+}1\le3)$ per pixel per scale, a few tens of megabytes in total. The detector state is in fact
+\emph{dominated by the GLR buffers}, which are \emph{not} ``tens of megabytes'': the window-limited
+GLR (Section~\ref{sec:seqdet}) maintains, per pixel and per scale, cumulative-sum ring buffers
+spanning the maximum window $N$. With $N$ in the low thousands, $M\sim4$ scales and
+$4.9\times10^4$ pixels this is of order
+$4.9\!\times\!10^4\times4\times2{,}000\times4\,\mathrm{B}\approx1.6\,\mathrm{GB}$---comfortable on a
+modern GPU, but a gigabyte-scale line item to be budgeted explicitly, not waved away. (Retaining
+only the dyadic cumulative sums rather than the full window trims this, at some loss of onset-time
+resolution.) The per-frame \emph{cost}, by contrast, is small fixed-size linear algebra over a
+gathered index set---ideal GPU work, with NESTED ordering keeping the active set memory-local.
+
+\subsection{The transient as a change in distribution}
+\label{sec:change}
+
+Write the pixel flux as quiescent plus transient, $f_k=b_k+a_k$, with $a_k=0$ for
+$k<t_0$. The KF is built to track $b_k$. By linearity of the filter, an additive input
+$a_k$ injects a \emph{deterministic} mean into the innovation sequence:
+\begin{equation}
+  \mu_k \;=\; \E[e_k\given a_{1:k}] \;=\; a_k - \bm{H}\bm{A}\,\bm{x}^{a}_{k-1|k-1},
+  \label{eq:mu}
+\end{equation}
+where $\bm{x}^{a}$ is the state estimate the filter would form when driven by $a$
+alone. In words: the innovation sees the part of the transient that the filter has
+\emph{not yet absorbed} into its state. The hypotheses are therefore
+\begin{equation}
+  H_0:\ z_k\sim\Norm(0,1)\quad\text{for all }k;
+  \qquad
+  H_1:\ z_k\sim\Norm(\delta_k,1)\ \text{for }k\ge t_0,\quad \delta_k=\mu_k/\sqrt{S_k}.
+\end{equation}
+
+\begin{remark}[Why stiffness controls slow-transient detectability]
+For a step transient $a_k=A\,\mathbf{1}[k\ge t_0]$, equation \eqref{eq:mu} shows that
+$\mu_{t_0}=A$ and that $\mu_k$ then decays toward zero as the filter ``catches up'',
+with a time constant set by the closed-loop gain---hence by the stiffness. A
+\emph{flexible} model (large $\sigma^2$) absorbs the step within a few samples,
+$\delta_k\to0$ quickly, and a slow/faint transient becomes invisible: it is
+\emph{explained away}. A \emph{stiff} model (small $\sigma^2$) lags, keeping
+$\delta_k$ elevated over many samples, so the excess accumulates in the test
+statistic. Slow transients thus require both a stiff quiescent reference and a long
+integration horizon---two facets of the same requirement, and the motivation for the
+multi-scale bank. The cost of excessive stiffness is false alarms on benign slow
+drifts (gains, ionosphere, intrinsic variability).
+\end{remark}
+
+\subsection{Sequential detection}
+\label{sec:seqdet}
+
+\paragraph{Likelihood ratio and Neyman--Pearson (background).}
+For deciding between two simple hypotheses, the Neyman--Pearson (NP) lemma states that
+the most powerful test at a given false-alarm probability rejects $H_0$ when the
+\emph{likelihood ratio} (LR) exceeds a threshold. For Gaussian innovations, the
+per-sample \emph{log-likelihood ratio} (LLR) for a shift of size $\delta$ is
+\begin{equation}
+  \ell_k(\delta) = \log\frac{\Norm(z_k;\delta,1)}{\Norm(z_k;0,1)}
+                 = \delta z_k - \half\delta^2 .
+  \label{eq:llr}
+\end{equation}
+
+\paragraph{SPRT (Wald).}
+The \emph{sequential probability ratio test} accumulates $\Lambda_k=\sum_{i\le k}\ell_i$
+and stops as soon as $\Lambda_k\ge \log\frac{1-\beta}{\alpha}$ (declare $H_1$) or
+$\Lambda_k\le\log\frac{\beta}{1-\alpha}$ (declare $H_0$), where $\alpha$ is the
+type-I error probability (false alarm) and $\beta$ the type-II error probability
+(miss). Among tests with these error rates, the SPRT minimises the expected number of
+samples. Its limitation for our use is that it assumes a \emph{known} change time and
+a single resolved decision; transient monitoring needs continuous surveillance with
+an \emph{unknown} onset.
+
+\paragraph{CUSUM (Page's test).}
+The \emph{cumulative sum} test handles an unknown onset by resetting the accumulation
+whenever the evidence turns non-positive:
+\begin{equation}
+  g_k = \max\!\big(0,\; g_{k-1}+\ell_k(\delta)\big),\qquad g_0=0,
+  \qquad\text{alarm when } g_k\ge h .
+  \label{eq:cusum}
+\end{equation}
+Substituting \eqref{eq:llr} gives the equivalent one-sided ``tabular'' form for a
+positive (brightening) shift,
+\begin{equation}
+  g_k=\max\big(0,\;g_{k-1}+z_k-\kappa\big),\qquad \kappa=\delta/2,
+\end{equation}
+where the \emph{reference value} $\kappa$ is half the smallest standardised shift one
+wishes to detect promptly. The $\max(0,\cdot)$ keeps the statistic primed for a change
+beginning at any future sample; CUSUM is equivalent to an SPRT restarted at every
+candidate change time. It is minimax optimal in Lorden's sense: it minimises the
+worst-case expected detection delay subject to a lower bound on the mean time between
+false alarms. A one-sided statistic (positive shifts only) is appropriate for
+brightening transients and is roughly twice as sensitive as the two-sided version.
+
+\paragraph{GLR (generalised likelihood ratio).}
+CUSUM fixes the shift size $\delta$. When the amplitude is unknown, the
+\emph{generalised likelihood ratio} test maximises the LLR over both the unknown onset
+$t_0$ and the unknown amplitude. For a Gaussian mean shift the inner maximisation is
+the maximum-likelihood estimate of $\delta$ over a candidate segment, with closed form
+\begin{equation}
+  G_k \;=\; \max_{1\le L\le N}\ \frac{1}{2L}\Bigg(\sum_{i=k-L+1}^{k} z_i\Bigg)^{\!2},
+  \qquad\text{alarm when } G_k\ge h,
+  \label{eq:glr}
+\end{equation}
+where $L=k-t_0+1$ is the (unknown) elapsed duration and $N$ is the maximum duration
+searched. A short $L$ with large amplitude (a fast bright transient) and a long $L$
+with small amplitude (a slow faint transient) are both admissible, so the GLR adapts
+its integration length automatically. The maximising $L$ estimates the duration and
+$\tfrac1L\sum z_i$ the standardised amplitude---useful science by-products. The
+search window $N$ is precisely where a finite window legitimately enters the design:
+\textbf{it is the longest transient the detector can optimally integrate}, not a
+batching device. Lengthening $N$ improves slow-transient sensitivity at the cost of
+computation and false-alarm exposure.
+
+\paragraph{Window-limited GLR and cost.} Naively, \eqref{eq:glr} costs $O(N)$ per pixel, per
+scale, per frame, which with $\sim\!4\times10^4$ pixels, several scales, and $N$ in the thousands is
+the detector's compute hot spot. The standard remedy is the \emph{window-limited} GLR of
+Lai~\cite{lai}: restrict the maximisation to a geometric (e.g.\ dyadic) set of windows
+$L\in\{1,2,4,\dots,N\}$, reducing the cost to $O(\log N)$ with provably small loss of detection
+efficiency (a transient of true duration $L^\ast$ is captured by the nearest dyadic window with at
+most a factor-$\sqrt2$ sensitivity penalty). Each window is a running boxcar over $z_k$ maintained
+in a ring buffer of cumulative sums---small, fixed-size, branch-free state per pixel that
+vectorises cleanly on the GPU and respects streaming (no batching).
+
+\paragraph{The negative channel.} The one-sided statistic is correct for \emph{declaring}
+brightening transients, but a mirrored negative-shift CUSUM run in parallel is an essentially free
+artifact monitor: gain and flux subtraction errors generate \emph{paired} positive/negative
+sidelobe structure (PSF-derivative patterns around the mis-subtracted source), whereas a real
+source is strictly non-negative after PSF convolution. The ratio of negative- to positive-channel
+activity in a candidate's spatial neighbourhood is therefore a cheap, label-free artifact score
+(consumed by Sections~\ref{sec:spatial} and~\ref{sec:stage3}); negative-channel alarms themselves
+are routed to the calibration diagnostics stream, never to the transient stream.
+
+\paragraph{Matched-filter connection.}
+If a transient temporal \emph{shape} $\bm{s}$ (e.g.\ an exponential flare or a
+dispersed pulse) is known up to amplitude, the optimal statistic is the matched filter
+$(\bm{s}\T\bm{z})^2/(\bm{s}\T\bm{s})$, which is $\chi^2_1$ under $H_0$. The GLR step
+test \eqref{eq:glr} is the special case $\bm{s}=\text{boxcar}$; replacing the boxcar
+with a template bank generalises the detector to specific light-curve morphologies.
+
+\subsection{Operating characteristics and calibration}
+\label{sec:arl}
+
+\paragraph{Average run length.}
+The operating point is summarised by two \emph{average run lengths} (ARLs):
+$\mathrm{ARL}_0=\E[\text{samples to alarm}\given H_0]$ (mean time between false alarms;
+to be made large) and $\mathrm{ARL}_1=\E[\text{detection delay}\given H_1]$ (to be made
+small). The threshold $h$ trades them off; $\mathrm{ARL}_0$ grows essentially
+exponentially in $h$. Closed-form approximations exist (Siegmund), but they assume
+exactly white Gaussian innovations and are best used only to seed an empirical
+calibration.
+
+\paragraph{Receiver operating characteristic.}
+The \emph{receiver operating characteristic} (ROC) plots detection probability against
+false-alarm rate as $h$ varies. We obtain it by \emph{injection}: add synthetic
+transients of known amplitude, duration and morphology into real
+(source-subtracted) data and measure detections versus false alarms. This is also the
+end-to-end test against an independent imager (e.g.\ DiSkO).
+
+\paragraph{Multiple testing.}
+With $P$ pixels each running a sequential test, the per-pixel threshold must be raised
+to control the \emph{aggregate} false-alarm rate. For a target of one false alarm per
+$T$ samples across the map, set the per-pixel $\mathrm{ARL}_0\approx P\,T$ (a
+Bonferroni-type correction). When many candidate detections are expected, controlling
+the \emph{false discovery rate} (FDR)---the expected fraction of declared detections
+that are spurious---via the Benjamini--Hochberg procedure is less conservative than
+controlling the family-wise error. Because the per-scale statistics
+(Section~\ref{sec:bank}) are correlated, the multiplicity correction is best fixed by
+empirical calibration on quiescent residuals rather than analytic union bounds. One requirement
+must be explicit: the calibration data are real quiescent residual \emph{maps} from the Stage-1
+pipeline, never synthetic white noise. The per-pixel innovations are spatially correlated through
+the PSF and the per-pixel duty cycles are heterogeneous (Section~\ref{sec:frame}); calibrating on
+real maps inherits both effects automatically, while white-noise calibration silently invalidates
+the threshold.
+
+\subsection{The multi-scale model bank and its combination}
+\label{sec:bank}
+
+Run $M$ quiescent models $\{\theta^{(m)}\}_{m=1}^{M}$ spanning a range of stiffnesses
+(values of $\sigma^2$, optionally orders $q$). Each KF emits its own innovation
+sequence $z_k^{(m)}$, evidence increment, and detection statistic $G_k^{(m)}$. Two
+combinations are useful:
+
+\paragraph{Bayesian model averaging (BMA) for the quiescent description.}
+Treating the bank as a discrete hyperparameter prior, the posterior model weights
+update recursively from the evidence increments \eqref{eq:evidence}:
+\begin{equation}
+  w_k^{(m)} \;\propto\; w_{k-1}^{(m)}\,
+  \Norm\!\big(y_k;\,\bm{H}\bm{x}^{(m)}_{k|k-1},\,S_k^{(m)}\big),
+  \qquad \sum_m w_k^{(m)}=1 .
+\end{equation}
+A forgetting factor (raising $w_{k-1}^{(m)}$ to a power $<1$ before re-normalising)
+keeps the weights responsive to slow non-stationarity. \emph{Critically}, this
+adaptation must run on a slower / more robust time-scale than detection: otherwise a
+transient is absorbed by up-weighting a flexible model, hiding the very signal of
+interest. In practice, freeze or heavily damp the weights during a candidate event.
+
+\paragraph{Detection across scales.}
+For declaring a transient, combine the per-scale detector outputs by the scale-wise
+maximum, $G_k=\max_m G_k^{(m)}$, with the threshold raised to absorb the $M$-fold
+multiplicity (again calibrated empirically). The argmax over scales reports the
+best-matched transient time-scale. This realises a temporal multi-scale matched
+filter: each scale is most sensitive to transients whose duration is comparable to,
+or longer than, that model's tracking time.
+
+\subsection{Spatial confirmation: testing alarms against the PSF}
+\label{sec:spatial}
+
+The per-pixel bank deliberately ignores the spatial dimension; the confirmation stage restores it,
+and it is the single most powerful model-based discriminant available. The dirty map is the true
+sky convolved with the PSF, so a genuine point-source transient does not produce an isolated
+single-pixel excess: it imprints the \emph{entire PSF pattern}---for TART's sparse array, sky-wide
+sidelobes---on the snapshot innovation field, centred on the source. Conversely, the dominant
+artifact class (imperfect subtraction of a $10^5$--$10^7$~Jy calibrator) imprints sidelobe and
+PSF-derivative patterns centred on \emph{catalogued} positions, and thermal noise respects neither
+template.
+
+\paragraph{Procedure.} Alarms raised in the same frame are first merged by connected components on
+the alarm map (a bright event fires many pixels through its sidelobes; it is one candidate, not
+many). For each merged candidate at pixel $j_0$: (i) compute the PSF template
+$\bm{\psi}(j_0)$ on demand from the current rotated baselines (gridless and exact---the PSF is
+direction- and time-dependent through the projected $uv$ coverage, so it is never precomputed);
+(ii) regress the snapshot normalised-innovation map on $\bm{\psi}(j_0)$, yielding a matched-filter
+amplitude and a goodness-of-fit; (iii) regress the same map on the sidelobe templates of the
+currently visible bright catalogued sources (and the Sun); (iv) score the candidate by the contrast
+between the PSF fit at the candidate position and the best catalogued-source template fit, together
+with the $\pm$-channel asymmetry of Section~\ref{sec:seqdet}. The matched filter is one dot product
+per template; under $H_0$ its analytic null is $\chi^2_1$ only for white pixel noise, so---as with
+every threshold in this design---the null distribution is calibrated empirically on quiescent
+residual maps, which carry the true spatial correlation.
+
+\paragraph{Architecture.} The per-pixel bank is the cheap, always-on \emph{trigger}; the spatial
+stage is the \emph{confirmer} and runs only at alarms, so it adds nothing to steady-state cost. Its
+outputs (matched-filter amplitude, fit contrasts, component size) are logged for every candidate
+and become the core of the Stage-3 feature vector.
+
+\subsection{Moving-source and known-object vetoes}
+\label{sec:veto}
+
+The detector's dominant alarm class will not be statistical false positives or even calibration
+artifacts---it will be \emph{real} transient flux that is not astrophysical: LEO satellites
+(Starlink passes are bright and fast at L band), MEO satellites missing from the GNSS calibrator
+catalogue, aircraft, and solar activity. These pass every purely statistical test because they are
+genuine signals; the discriminants are kinematic and catalogue-based:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Kinematic discrimination.} Link candidate centroids across consecutive frames in
+        the equatorial frame. A celestial transient is fixed (sub-pixel motion); satellites and
+        aircraft traverse degrees per minute to degrees per second. The fitted angular velocity is
+        the primary routing feature.
+  \item \textbf{TLE catalogue matching.} Propagate the \emph{full} public TLE catalogue (not just
+        the GNSS calibrators) with \texttt{sgp4}/\texttt{skyfield} and match candidate tracks
+        against predicted passes; TLE accuracy is ample at TART resolution. Matched candidates are
+        labelled, not discarded.
+  \item \textbf{Coincidence features.} The calibration-side NIS state (a coherent multi-baseline
+        excess unassociated with any catalogued source corroborates a genuine coherent emitter;
+        Section~\ref{sec:robust}), proximity to catalogued bright sources, the map-wide alarm rate
+        at that epoch (artifact storms fire incoherently across the map; a real bright event fires
+        \emph{in the PSF pattern}), and the $\pm$-channel asymmetry.
+\end{itemize}
+Routing, not deletion: candidates classify into an \emph{astrophysical} stream (fixed, unmatched,
+PSF-confirmed), an \emph{SSA} side channel (moving or TLE-matched---of independent interest), and a
+\emph{diagnostics} stream (artifact-like; fed back to calibration monitoring). Every candidate, in
+every stream, is archived with its features and cutouts: Stage 3 trains on exactly this exhaust.
+
+\subsection{Practical considerations}
+\label{sec:prac}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Initialisation and re-acquisition.} Start each filter from a diffuse prior
+  ($\bm{P}_{0|0}$ large); the first few $S_k$ are inflated, so suppress detections during a short
+  warm-up. The \emph{same} mechanism covers pixel rise after a below-horizon gap with no extra
+  logic: the $\Delta$-exact predict step inflates the covariance across the gap, $S_k$ is large at
+  rise, and sensitivity recovers as the filter re-locks. Suppress detections while $S_k$ remains
+  materially above its quiescent level rather than for a fixed frame count.
+  \item \textbf{Numerics.} Use Joseph-form or square-root covariance updates; with
+  thousands of independent pixel$\times$scale filters of state dimension $q{+}1\le3$,
+  the per-frame cost is dominated by small fixed-size linear algebra and vectorises
+  cleanly.
+  \item \textbf{LST-conditioned quiescent template.} The sky seen by an equatorial pixel is a
+  periodic function of LST (steady sources modulated by the elevation-dependent element response).
+  A per-pixel quiescent mean binned by LST, learned offline from the archive and \emph{frozen}
+  online, can be subtracted before the filter; the IWP then tracks only departures from the
+  template, which permits stiffer models and hence better slow-transient sensitivity. This is free
+  self-supervised structure---no labels, just archival data---and a natural precursor to the
+  Stage-3 machinery.
+  \item \textbf{Robustness to RFI.} Heavy-tailed outliers violate the Gaussian
+  observation model and inflate false alarms. A Student-$t$ observation model or a
+  simple innovation gate ($|z_k|$ clipped, with the sample down-weighted) restores
+  robustness; the former makes the model non-Gaussian and is the one place a
+  Rao--Blackwellised particle treatment (particles over an outlier/changepoint
+  indicator, KF marginalising the continuous state) would be justified.
+  \item \textbf{Validation order.} (i) Confirm filter consistency (NIS/whiteness) on
+  quiescent data; (ii) calibrate $h$ for the target false-alarm rate on
+  source-subtracted residuals; (iii) build ROC curves by injection; (iv) cross-check
+  the recovered flux against an independent imager.
+\end{itemize}
+
+\subsection{Summary of the Stage-2 heuristic}
+
+For each equatorial pixel and each scale $m$: run the IWP Kalman filter \eqref{eq:disc} over the
+pixel's visible samples, form the normalised innovation $z_k^{(m)}$, and accumulate the one-sided
+window-limited GLR statistic \eqref{eq:glr} (frozen across below-horizon gaps). Trigger when
+$\max_m G_k^{(m)}$ exceeds a threshold calibrated empirically on quiescent residual maps for the
+desired map-wide false-alarm rate. Merge co-fired pixels, confirm against the on-demand PSF
+template, screen with kinematic and TLE vetoes, and route to the astrophysical, SSA, or diagnostics
+stream, reporting onset, duration, amplitude and time-scale from the maximising segment and model.
+Quiescent-model adaptation (BMA weights) runs on a slow, damped time-scale so that transients are
+detected rather than absorbed; the negative channel and the calibration NIS side-stream supply
+artifact evidence throughout.
+
+\section{Stage 3: machine-learning candidate classification}
+\label{sec:stage3}
+
+\paragraph{Governing principle: strictly post-alarm.} The statistical trigger of Stage 2 has a
+provable, empirically calibrated false-alarm rate and no training-distribution dependence. The ML
+layer therefore \emph{ranks and classifies} candidates but never gates the trigger: a misbehaving
+model degrades the purity of the ranked stream, never the completeness of the underlying search,
+and the detector's $\mathrm{ARL}_0$ claim survives any model regression. This also fixes the data
+contract: Stage 2 must log, from day one, the engineered feature vector and spatio-temporal cutouts
+(innovation maps and pixel light curves around the event, plus matched random quiescent cutouts)
+for \emph{every} alarm in \emph{every} stream---the Stage-3 training corpus is Stage-2 exhaust.
+
+\paragraph{Tier 1: engineered features with active-learning anomaly detection (no training data).}
+The Stage-2 layers already compute a discriminative feature vector per candidate: estimated
+duration $\hat L$, standardised amplitude, argmax scale, PSF matched-filter amplitude and fit
+contrast, catalogued-source template contrast, component size, angular velocity, TLE-match flag,
+calibration-NIS coincidence, $\pm$-channel asymmetry, map-wide alarm rate, elevation and LST at
+detection. Rank candidates by anomaly score (isolation forest or local outlier factor over these
+features) inside an active-learning loop using the \textsc{astronomaly}
+framework~\cite{lochner}---human vetting sessions re-rank the stream, so labels are acquired
+incrementally exactly where they are most informative. This approach has been demonstrated on
+MeerKAT radio light curves, recalling the majority of true transients within the top decile of
+anomaly-scored data~\cite{andersson}. Tier 1 requires zero labelled data to deploy and is the
+recommended first increment.
+
+\paragraph{Tier 2: injection-trained real/bogus classification (labels from simulation).} The
+injection machinery built for the Stage-2 ROC calibration (Section~\ref{sec:arl}) doubles as an
+unlimited generator of labelled \emph{positives}: synthetic transients of known amplitude, duration
+and morphology embedded in real source-subtracted residuals, hence in genuine noise and genuine
+artifacts. \emph{Negatives} are alarms raised on quiescent archival stretches, vetted through
+Tier 1. Train a real/bogus classifier in the manner of the optical-survey pipelines---gradient-boosted
+trees on the Tier-1 features first, a compact CNN on the spatio-temporal cutouts once volumes
+justify it---with simulation supplying the positive class. The engineering risk is the sim-to-real
+gap: inject across a morphology family deliberately broader than expected in nature, and validate
+score calibration on held-out injection campaigns with parameters disjoint from training.
+
+\paragraph{Tier 3: self-supervised representations (when archival volume justifies it).} Pre-train
+an embedding on the unlabelled cutout archive and detect anomalies in representation space. The
+closest radio precedent is the ROAD framework for LOFAR~\cite{mesarcik}, which is instructive in
+two respects: it learns the instrument's normal behaviour through self-supervised pretext tasks in
+real time, and it deliberately \emph{splits} the objectives---a supervised head for the common,
+known anomaly classes and an SSL-based detector for unseen, out-of-distribution events---because
+supervised classifiers degrade badly on classes absent from training. That two-headed structure
+maps directly onto KREMETART: known classes (satellite passes, sidelobe artifacts, RFI storms)
+accumulate labels quickly because they are common; the SSL anomaly head guards the rare
+unknown-unknowns that are the scientific point. Two concrete instantiations: a BYOL-style
+non-contrastive embedding over cutouts feeding the Tier-1 active-learning loop, and a
+reconstruction model trained only on quiescent residual maps whose per-pixel reconstruction error
+is an artifact-aware NIS analogue. Tier 3 is contingent on the archive accumulated by Tiers 1--2
+and should not block them.
+
+\section{Stage 4: route to a peer-reviewed publication}
+\label{sec:stage4}
+
+This section is deliberately a living outline, to be iterated as Stages 1--3 mature. The natural
+product is a methods/pipeline paper (candidate venues: \emph{Astronomy \& Computing}, \emph{RAS
+Techniques \& Instruments}, \emph{MNRAS}, \emph{PASA}), with a plausible split into Paper~I
+(pipeline, validation, operating characteristics; Stages 1--2) and Paper~II (survey results and the
+ML layer; Stage 3) if the candidate campaign yields enough material.
+
+\paragraph{Required results (the figures and tables the paper cannot exist without).}
+\begin{enumerate}[leftmargin=*]
+  \item Offline hyperparameter fits: driving variances, thermal $\sigma_n^2$, amplitude means,
+        with the marginal-likelihood methodology of Section~\ref{sec:hyper} and the bias of the
+        increment-variance shortcut demonstrated on real solution tracks.
+  \item Calibration validation: gain tracks against the existing TART GNSS self-calibration
+        (Scheel/Molteno) on archived observations---quantitative track agreement and post-subtraction
+        residual RMS, including the fixed-lag smoother ablation ($L=0,1,2$).
+  \item Imaging validation: dirty and Tikhonov maps against \textsc{disko} on the same archived
+        data; demonstration that the rotated-baseline equatorial maps are numerically identical to
+        rotated local-frame maps (the frame-equivalence check).
+  \item Filter consistency: NIS whiteness and autocorrelation flatness of the per-pixel innovations
+        on quiescent stretches, across declinations and duty cycles.
+  \item Detector calibration: empirical $\mathrm{ARL}_0$ at the chosen thresholds demonstrated over
+        $\ge$ a few sidereal weeks of quiescent data, including duty-cycle heterogeneity.
+  \item Injection completeness: ROC / completeness surfaces over amplitude $\times$ duration
+        $\times$ sky position, dirty vs.\ Tikhonov, with and without the LST template.
+  \item Throughput and latency: frames per second, GPU utilisation, end-to-end latency budget
+        (including smoother lag), on the deployment hardware.
+  \item A continuous campaign ($\ge$30 days): candidate catalogue with stream routing statistics,
+        recovery of ``truth'' events (TLE-matched satellite passes as found transients; solar
+        activity if present), human-vetting outcomes, and at least one blind live-injection
+        recovery.
+  \item Ablations: Student-$t$ vs.\ innovation gate; bank size $M$; window-limited vs.\ full GLR;
+        equatorial grid vs.\ local grid (to quantify the steady-source false-alarm catastrophe the
+        frame choice avoids).
+\end{enumerate}
+
+\paragraph{Action items.}
+\begin{itemize}[leftmargin=*]
+  \item Freeze the ingest format and timestamp contract with the TART operators; sample data in
+        hand before the reader is written.
+  \item Build the injection framework \emph{early}---it serves Stage-2 calibration, Stage-3
+        training, and the paper's completeness analysis; it is the highest-leverage component.
+  \item Fix $\mathrm{nside}$, frame cadence, and the bank scales from the offline archive before the
+        campaign; document the choices. (There is no $\mathrm{el}_{\min}$ cut---the full sphere is
+        imaged and the primary beam, once available, supplies the soft elevation weighting;
+        Section~\ref{sec:imaging}.)
+  \item Reproducibility from the start: \texttt{hip-cargo} packaging, container images, pinned
+        seeds, archived configuration per run, and a DOI-archived validation dataset.
+  \item Independent cross-checks: run the LOFAR Transients Pipeline (\textsc{TraP})~\cite{swinbank}
+        variability statistics over stacked archived residual maps as an external consistency check
+        on the candidate catalogue.
+  \item Reference-antenna failover drill and gauge-consistency test in CI.
+\end{itemize}
+
+\paragraph{Caveats and limitations to explore (and state honestly).}
+\begin{itemize}[leftmargin=*]
+  \item Direction-independent, single-polarisation calibration only; gains chase the flux-weighted
+        average of any direction-dependent effects.
+  \item Relative (self-calibrated) flux scale, pinned to the reference antenna; no absolute
+        radiometry.
+  \item No element-beam model yet (ongoing student project); until it lands, $\sigma_A^2$ must
+        track beam-induced apparent-flux trends, costing flux/gain separability
+        (Section~\ref{sec:imaging}).
+  \item Map-noise Gaussianity is assumed by the detector and must be tested; all thresholds are
+        empirical because the pixel field is PSF-correlated.
+  \item GNSS catalogue completeness and the geostationary separation difficulty; sensitivity
+        expectations should be set candidly (what transient population is plausibly detectable
+        with TART's sensitivity and confusion environment).
+  \item Sim-to-real realism of injections; duty-cycle heterogeneity of per-pixel false-alarm
+        rates; CUSUM freeze semantics across gaps as a modelling choice.
+\end{itemize}
+
+\paragraph{Open questions for iteration.} Whether Paper I should include Tier-1 ML or end at the
+rule-based vetoes; whether the SSA side channel merits its own short paper; and what constitutes a
+sufficient blind-injection protocol for the completeness claim.
+
+\begin{thebibliography}{99}
+\small
+\bibitem{kailath} T.~Kailath, ``An innovations approach to least-squares estimation, Part I,'' \emph{IEEE Trans.\ Autom.\ Control}, 13(6):646--655, 1968.
+\bibitem{barshalom} Y.~Bar-Shalom, X.-R.~Li and T.~Kirubarajan, \emph{Estimation with Applications to Tracking and Navigation}, Wiley, 2001.
+\bibitem{sarkka} S.~S\"arkk\"a and A.~Solin, \emph{Applied Stochastic Differential Equations}, Cambridge University Press, 2019.
+\bibitem{hartikainen} J.~Hartikainen and S.~S\"arkk\"a, ``Kalman filtering and smoothing solutions to temporal Gaussian process regression models,'' \emph{IEEE MLSP}, 2010.
+\bibitem{stefcal} S.~Salvini and S.~J.~Wijnholds, ``Fast gain calibration in radio astronomy using alternating direction implicit methods,'' \emph{Astron.\ Astrophys.}, 571:A97, 2014.
+\bibitem{studentt} M.~Roth, E.~\"Ozkan and F.~Gustafsson, ``A Student's t filter for heavy tailed process and measurement noise,'' \emph{IEEE ICASSP}, 2013.
+\bibitem{healpix} K.~M.~G\'orski et al., ``HEALPix: A framework for high-resolution discretization and fast analysis of data distributed on the sphere,'' \emph{Astrophys.\ J.}, 622:759--771, 2005.
+\bibitem{tart} The TART collaboration, \emph{Transient Array Radio Telescope}, \url{https://github.com/tart-telescope}.
+\bibitem{disko} T.~Molteno, \textsc{DiSkO} and \textsc{spotless}, \url{https://github.com/tmolteno}.
+\bibitem{wald} A.~Wald, \emph{Sequential Analysis}, Wiley, 1947.
+\bibitem{page} E.~S.~Page, ``Continuous inspection schemes,'' \emph{Biometrika}, 41(1/2):100--115, 1954.
+\bibitem{lorden} G.~Lorden, ``Procedures for reacting to a change in distribution,'' \emph{Ann.\ Math.\ Statist.}, 42(6):1897--1908, 1971.
+\bibitem{willsky} A.~S.~Willsky and H.~L.~Jones, ``A generalized likelihood ratio approach to the detection and estimation of jumps in linear systems,'' \emph{IEEE Trans.\ Autom.\ Control}, 21(1):108--112, 1976.
+\bibitem{basseville} M.~Basseville and I.~V.~Nikiforov, \emph{Detection of Abrupt Changes: Theory and Application}, Prentice Hall, 1993.
+\bibitem{siegmund} D.~Siegmund, \emph{Sequential Analysis: Tests and Confidence Intervals}, Springer, 1985.
+\bibitem{lai} T.~L.~Lai, ``Sequential changepoint detection in quality control and dynamical systems,'' \emph{J.\ R.\ Stat.\ Soc.\ B}, 57(4):613--658, 1995.
+\bibitem{bh} Y.~Benjamini and Y.~Hochberg, ``Controlling the false discovery rate,'' \emph{J.\ R.\ Stat.\ Soc.\ B}, 57(1):289--300, 1995.
+\bibitem{swinbank} J.~D.~Swinbank et al., ``The LOFAR Transients Pipeline,'' \emph{Astronomy and Computing}, 11:25--48, 2015.
+\bibitem{lochner} M.~Lochner and B.~A.~Bassett, ``Astronomaly: Personalised active anomaly detection in astronomical data,'' \emph{Astronomy and Computing}, 36:100481, 2021.
+\bibitem{andersson} A.~Andersson et al., ``Finding radio transients with anomaly detection and active learning based on volunteer classifications,'' \emph{Mon.\ Not.\ R.\ Astron.\ Soc.}, 538(3):1397, 2025.
+\bibitem{mesarcik} M.~Mesarcik et al., ``The ROAD to discovery: machine-learning-driven anomaly detection in radio astronomy spectrograms,'' \emph{Astron.\ Astrophys.}, 680:A74, 2023.
+\end{thebibliography}
+
+\end{document}

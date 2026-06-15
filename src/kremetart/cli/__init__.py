@@ -20,4 +20,8 @@ from kremetart.cli.onboard import onboard  # noqa: E402
 
 app.command(name="onboard")(onboard)
 
+from kremetart.cli.stream_msv4 import stream_msv4  # noqa: E402
+
+app.command(name="stream-msv4")(stream_msv4)
+
 __all__ = ["app"]

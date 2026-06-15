@@ -1,0 +1,24 @@
+cabs:
+  stream_msv4:
+    flavour: python
+    command: kremetart.core.stream_msv4.stream_msv4
+    name: stream-msv4
+    info:
+      Stream MSv4 data to a Zarr dataset.
+    image: ghcr.io/landmanbester/kremetart:setup
+    inputs:
+      ms:
+        info:
+          Input data source
+        dtype: Optional[str]
+        type: Directory
+      output-dataset:
+        info:
+          Output Zarr dataset
+        dtype: Optional[str]
+        type: Directory
+    outputs:
+      output_dataset:
+        dtype: File
+        info:
+          Output Zarr dataset
