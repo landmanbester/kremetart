@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "healpy>=1.19.0",
     "hip-cargo>=0.2.1",
 ]
 
@@ -33,11 +34,15 @@ full = [
     "numpy>=2.0.0",
     "scipy>=1.15.0",
     "xarray>=2025.0",
+    "astropy>=6.0.0",
     "zarr>=2.18.3",
     "holoscan-cu13>=4.3.0",
-    "tart-tools>=1.4.5",
-    "tart[all]>=1.4.5",
-    "netcdf4",
+    "tart-tools>=1.4.5 ; python_version >= '3.11'",
+    "netcdf4>=1.7.4 ; python_version >= '3.11'",
+    "tart[all]>=1.4.5  ; python_version >= '3.11'",
+    "arcae>=0.5.2,<0.6.0 ; python_version >= '3.11'",
+    "xarray-ms>=0.5.5 ; python_version >= '3.11'",
+    "msv4-utils>=0.0.3 ; python_version >= '3.11'",
 ]
 
 [project.urls]
