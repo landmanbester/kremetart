@@ -15,14 +15,15 @@ importable on a CPU machine -- it never imports cupy or holoscan.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
 
 
 def prepare_msv4_zarr(
-    hdf_paths,
-    out_zarr,
+    hdf_paths: Iterable[Path | str],
+    out_zarr: Path | str,
     *,
     correct_gains: bool = False,
     phase_ra_deg: float | None = None,

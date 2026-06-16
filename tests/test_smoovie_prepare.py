@@ -77,7 +77,7 @@ def test_prepare_msv4_zarr_correct_gains_matches_helper(tmp_path):
     main = node.ds
     vis = np.asarray(main.VISIBILITY.values)[..., 0]
     wgt = np.asarray(main.WEIGHT.values)[..., 0]
-    vis_c, wgt_c = _correct_file_gains(node, vis, wgt)
+    vis_c, wgt_c = _correct_file_gains(node, vis, wgt, xp=np)
 
     out = tmp_path / "prepared.zarr"
     prepare_msv4_zarr(paths, out, correct_gains=True)
@@ -95,3 +95,22 @@ def test_prepare_msv4_zarr_nframes_caps(tmp_path):
     prepare_msv4_zarr(_hdfs(), out, nframes=3)
     ds = xr.open_zarr(str(out))
     assert ds.time.size == 3
+
+
+def test_prepare_msv4_zarr_nframes_crosses_file_boundary(tmp_path):
+    import xarray as xr
+
+    from kremetart.core.smoovie import _partition
+    from kremetart.core.smoovie_prepare import prepare_msv4_zarr
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    paths = _hdfs()
+    if len(paths) < 2:
+        pytest.skip("need >=2 HDF files to cross a file boundary")
+    n0 = int(_partition(read_hdf_as_msv4(paths[0])).ds.time.size)
+    cap = n0 + 2  # forces reading into the second file, then the early-break + final slice
+
+    out = tmp_path / "prepared.zarr"
+    prepare_msv4_zarr(paths, out, nframes=cap)
+    ds = xr.open_zarr(str(out))
+    assert ds.time.size == cap
