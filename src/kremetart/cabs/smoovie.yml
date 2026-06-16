@@ -34,6 +34,21 @@ cabs:
         info:
           Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.
         dtype: Optional[float]
+      correct-gains:
+        info:
+          Apply the inverse per-antenna gain solution before imaging.
+        dtype: bool
+        default: false
+      overlay-catalog:
+        info:
+          Overlay TART catalog satellite tracks on each frame (requires network).
+        dtype: bool
+        default: false
+      catalog-elevation-deg:
+        info:
+          Elevation cutoff (deg) for catalog sources to overlay.
+        dtype: float
+        default: 45.0
     outputs:
       movie:
         dtype: File

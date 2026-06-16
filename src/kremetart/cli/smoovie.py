@@ -56,6 +56,24 @@ def smoovie(
             help="Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.",
         ),
     ] = None,
+    correct_gains: Annotated[
+        bool,
+        typer.Option(
+            help="Apply the inverse per-antenna gain solution before imaging.",
+        ),
+    ] = False,
+    overlay_catalog: Annotated[
+        bool,
+        typer.Option(
+            help="Overlay TART catalog satellite tracks on each frame (requires network).",
+        ),
+    ] = False,
+    catalog_elevation_deg: Annotated[
+        float,
+        typer.Option(
+            help="Elevation cutoff (deg) for catalog sources to overlay.",
+        ),
+    ] = 45.0,
     movie: Annotated[
         File | None,
         typer.Option(
@@ -99,6 +117,9 @@ def smoovie(
                     cmap=cmap,
                     phase_ra_deg=phase_ra_deg,
                     phase_dec_deg=phase_dec_deg,
+                    correct_gains=correct_gains,
+                    overlay_catalog=overlay_catalog,
+                    catalog_elevation_deg=catalog_elevation_deg,
                     movie=movie,
                 ),
             )
@@ -114,6 +135,9 @@ def smoovie(
                 cmap=cmap,
                 phase_ra_deg=phase_ra_deg,
                 phase_dec_deg=phase_dec_deg,
+                correct_gains=correct_gains,
+                overlay_catalog=overlay_catalog,
+                catalog_elevation_deg=catalog_elevation_deg,
                 movie=movie,
             )
             return
@@ -138,6 +162,9 @@ def smoovie(
             cmap=cmap,
             phase_ra_deg=phase_ra_deg,
             phase_dec_deg=phase_dec_deg,
+            correct_gains=correct_gains,
+            overlay_catalog=overlay_catalog,
+            catalog_elevation_deg=catalog_elevation_deg,
             movie=movie,
         ),
         image=image,
