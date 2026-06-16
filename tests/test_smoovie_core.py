@@ -78,30 +78,62 @@ def test_frame_dirty_maps_nframes_caps():
     assert len(maps) == len(stamps) == 3
 
 
-def test_render_frames_overlays_tracks(tmp_path, monkeypatch):
+def test_overlay_tracks_marker_trail_label():
+    from kremetart.core.smoovie import _overlay_tracks
+
+    class FakeAx:
+        def __init__(self):
+            self.c = {"projscatter": 0, "projplot": 0, "projtext": 0}
+
+        def projscatter(self, *a, **k):
+            self.c["projscatter"] += 1
+
+        def projplot(self, *a, **k):
+            self.c["projplot"] += 1
+
+        def projtext(self, *a, **k):
+            self.c["projtext"] += 1
+
+    tracks = {"SAT-A": [(0, 10.0, -20.0, 1.0), (1, 12.0, -19.0, 1.0)]}
+
+    ax = FakeAx()
+    _overlay_tracks(ax, tracks, 0)  # frame 0: marker + label, no trail yet
+    assert ax.c == {"projscatter": 1, "projplot": 0, "projtext": 1}
+
+    ax = FakeAx()
+    _overlay_tracks(ax, tracks, 1)  # frame 1: marker + label + trail (>1 past point)
+    assert ax.c == {"projscatter": 1, "projplot": 1, "projtext": 1}
+
+    ax = FakeAx()
+    _overlay_tracks(ax, tracks, 5)  # satellite absent at frame 5: nothing drawn
+    assert ax.c == {"projscatter": 0, "projplot": 0, "projtext": 0}
+
+
+def test_render_frames_overlay_uses_axes_not_drawing_wrappers(tmp_path, monkeypatch):
     pytest.importorskip("matplotlib")
     import healpy as hp
 
     import kremetart.core.smoovie as sm
 
-    calls = {"scatter": 0, "plot": 0, "text": 0}
-    monkeypatch.setattr(hp, "projscatter", lambda *a, **k: calls.__setitem__("scatter", calls["scatter"] + 1))
-    monkeypatch.setattr(hp, "projplot", lambda *a, **k: calls.__setitem__("plot", calls["plot"] + 1))
-    monkeypatch.setattr(hp, "projtext", lambda *a, **k: calls.__setitem__("text", calls["text"] + 1))
+    # Root-cause guard: the overlay must use the projection-axes methods, NOT the module-level
+    # hp.proj* wrappers -- each wrapper forces a full pylab.draw(), turning an N-satellite overlay into
+    # ~N full-figure re-rasterizations per frame (the cause of ~15 s/frame rendering). If render_frames
+    # ever calls these wrappers again, the overlay raises here.
+    def boom(*a, **k):
+        raise AssertionError("overlay must call ax.proj* (no pylab.draw), not the hp.proj* wrappers")
+
+    monkeypatch.setattr(hp, "projscatter", boom)
+    monkeypatch.setattr(hp, "projplot", boom)
+    monkeypatch.setattr(hp, "projtext", boom)
 
     nside = 8
     npix = 12 * nside * nside
     maps = [np.arange(npix, dtype=float), np.arange(npix, dtype=float) + 1.0]
     stamps = ["t0 UTC", "t1 UTC"]
-    # SAT-A is present in both frames; the trailing line only appears once there are >1 past points.
     tracks = {"SAT-A": [(0, 10.0, -20.0, 1.0), (1, 12.0, -19.0, 1.0)]}
 
     pngs = sm.render_frames(maps, stamps, nside, "inferno", tmp_path, rot=(0.0, -30.0), tracks=tracks)
-
     assert len(pngs) == 2
-    assert calls["scatter"] == 2  # one marker per frame
-    assert calls["text"] == 2  # one label per frame
-    assert calls["plot"] == 1  # trail drawn only on frame 1 (needs >1 past point)
 
 
 def test_smoovie_produces_movie(tmp_path):

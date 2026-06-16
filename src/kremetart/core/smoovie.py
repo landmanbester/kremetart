@@ -132,12 +132,17 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nfra
     return maps, stamps, pix_vec
 
 
-def _overlay_tracks(hp, tracks, frame_index):
+def _overlay_tracks(ax, tracks, frame_index):
     """Draw each satellite present in ``frame_index``: trailing line, current marker, name label.
 
-    ``tracks`` maps name -> list of ``(frame_index, ra_deg, dec_deg, flux_jy)``. Coordinates are
-    plotted with ``lonlat=True`` (degrees, ``lon == RA``) so healpy applies the active Mollweide
-    ``rot`` and the overlay lands in the same projected ICRS frame as the imaged pixels.
+    ``tracks`` maps name -> list of ``(frame_index, ra_deg, dec_deg, flux_jy)``. ``ax`` is the active
+    healpy Mollweide projection axes (``plt.gca()`` after ``mollview``); its ``projscatter`` /
+    ``projplot`` / ``projtext`` methods are called directly rather than the module-level ``hp.proj*``
+    wrappers, because each wrapper forces a full ``pylab.draw()`` on every call -- turning an
+    N-satellite overlay into ~N full-figure re-rasterizations per frame (the cause of ~15 s/frame
+    rendering). The axes methods draw nothing until the single ``savefig`` per frame. Coordinates use
+    ``lonlat=True`` (degrees, ``lon == RA``) so the active ``rot`` is applied and the overlay lands in
+    the same projected ICRS frame as the imaged pixels.
     """
     for name, points in tracks.items():
         trail = [(ra, dec) for (f, ra, dec, _jy) in points if f <= frame_index]
@@ -145,7 +150,7 @@ def _overlay_tracks(hp, tracks, frame_index):
         if not current:
             continue  # satellite not above the cutoff in this frame
         if len(trail) > 1:
-            hp.projplot(
+            ax.projplot(
                 [ra for ra, _ in trail],
                 [dec for _, dec in trail],
                 lonlat=True,
@@ -154,8 +159,8 @@ def _overlay_tracks(hp, tracks, frame_index):
                 alpha=0.6,
             )
         ra0, dec0 = current[0]
-        hp.projscatter([ra0], [dec0], lonlat=True, color="cyan", marker="x", s=30)
-        hp.projtext(ra0, dec0, name, lonlat=True, color="cyan", fontsize=6)
+        ax.projscatter([ra0], [dec0], lonlat=True, color="cyan", marker="x", s=30)
+        ax.projtext(ra0, dec0, name, lonlat=True, color="cyan", fontsize=6)
 
 
 def render_frames(
@@ -189,7 +194,7 @@ def render_frames(
         hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax), rot=rot)
         hp.graticule()
         if tracks:
-            _overlay_tracks(hp, tracks, i)
+            _overlay_tracks(plt.gca(), tracks, i)
         out = outdir / f"frame_{i:04d}.png"
         plt.savefig(out, dpi=100)
         plt.close("all")
