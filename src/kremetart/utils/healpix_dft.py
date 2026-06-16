@@ -131,7 +131,7 @@ def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp:
     """Rotate fixed ITRS baselines into the equatorial frame for each timestamp.
 
     Args:
-        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (e.g. from rephasing's ``_itrs_baselines``).
+        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (e.g. from rephasing's ``itrs_baselines``).
         times: ``(n_time,)`` unix-second timestamps.
         backend: ``"astropy"`` (the oracle, host-side) or ``"native"`` (GPU polynomial; later phase).
         xp: Array module for the returned array.

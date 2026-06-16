@@ -1,0 +1,69 @@
+cabs:
+  smoovie:
+    flavour: python
+    command: kremetart.core.smoovie.smoovie
+    name: smoovie
+    info:
+      Render a TART HDF sequence into a HEALPix all-sky movie.
+    image: ghcr.io/landmanbester/kremetart:actually_make_movie
+    inputs:
+      hdf-dir:
+        info:
+          Directory of input TART HDF snapshots
+        dtype: Optional[str]
+        type: Directory
+      nside:
+        info:
+          HEALPix nside resolution.
+        dtype: int
+        default: 128
+      fps:
+        info:
+          Frames per second.
+        dtype: int
+        default: 2
+      cmap:
+        info:
+          Matplotlib colormap.
+        default: inferno
+      phase-ra-deg:
+        info:
+          Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.
+        dtype: Optional[float]
+      phase-dec-deg:
+        info:
+          Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.
+        dtype: Optional[float]
+      correct-gains:
+        info:
+          Apply the inverse per-antenna gain solution before imaging.
+        dtype: bool
+        default: false
+      overlay-catalog:
+        info:
+          Overlay TART catalog satellite tracks on each frame (requires network).
+        dtype: bool
+        default: false
+      catalog-elevation-deg:
+        info:
+          Elevation cutoff (deg) for catalog sources to overlay.
+        dtype: float
+        default: 45.0
+      catalog-cache:
+        info:
+          Catalog cache zarr path; defaults to <movie>.catalog.zarr.
+        dtype: Optional[str]
+      profile:
+        info:
+          Print a per-stage timing summary.
+        dtype: bool
+        default: false
+      nframes:
+        info:
+          Cap the number of frames imaged/rendered (profiling/preview aid).
+        dtype: Optional[int]
+    outputs:
+      movie:
+        dtype: File
+        info:
+          Output mp4 movie

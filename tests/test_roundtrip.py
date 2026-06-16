@@ -55,3 +55,8 @@ def _assert_roundtrip(command_name: str) -> None:
 def test_roundtrip_onboard() -> None:
     """The onboard command must round-trip cleanly through a cab."""
     _assert_roundtrip("onboard")
+
+
+def test_roundtrip_smoovie() -> None:
+    """The smoovie command must round-trip cleanly through a cab."""
+    _assert_roundtrip("smoovie")
