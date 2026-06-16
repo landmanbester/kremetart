@@ -49,6 +49,19 @@ cabs:
           Elevation cutoff (deg) for catalog sources to overlay.
         dtype: float
         default: 45.0
+      catalog-cache:
+        info:
+          Catalog cache zarr path; defaults to <movie>.catalog.zarr.
+        dtype: Optional[str]
+      profile:
+        info:
+          Print a per-stage timing summary.
+        dtype: bool
+        default: false
+      nframes:
+        info:
+          Cap the number of frames imaged/rendered (profiling/preview aid).
+        dtype: Optional[int]
     outputs:
       movie:
         dtype: File

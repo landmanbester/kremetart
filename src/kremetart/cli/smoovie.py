@@ -74,6 +74,24 @@ def smoovie(
             help="Elevation cutoff (deg) for catalog sources to overlay.",
         ),
     ] = 45.0,
+    catalog_cache: Annotated[
+        str | None,
+        typer.Option(
+            help="Catalog cache zarr path; defaults to <movie>.catalog.zarr.",
+        ),
+    ] = None,
+    profile: Annotated[
+        bool,
+        typer.Option(
+            help="Print a per-stage timing summary.",
+        ),
+    ] = False,
+    nframes: Annotated[
+        int | None,
+        typer.Option(
+            help="Cap the number of frames imaged/rendered (profiling/preview aid).",
+        ),
+    ] = None,
     movie: Annotated[
         File | None,
         typer.Option(
@@ -120,6 +138,9 @@ def smoovie(
                     correct_gains=correct_gains,
                     overlay_catalog=overlay_catalog,
                     catalog_elevation_deg=catalog_elevation_deg,
+                    catalog_cache=catalog_cache,
+                    profile=profile,
+                    nframes=nframes,
                     movie=movie,
                 ),
             )
@@ -138,6 +159,9 @@ def smoovie(
                 correct_gains=correct_gains,
                 overlay_catalog=overlay_catalog,
                 catalog_elevation_deg=catalog_elevation_deg,
+                catalog_cache=catalog_cache,
+                profile=profile,
+                nframes=nframes,
                 movie=movie,
             )
             return
@@ -165,6 +189,9 @@ def smoovie(
             correct_gains=correct_gains,
             overlay_catalog=overlay_catalog,
             catalog_elevation_deg=catalog_elevation_deg,
+            catalog_cache=catalog_cache,
+            profile=profile,
+            nframes=nframes,
             movie=movie,
         ),
         image=image,
