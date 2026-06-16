@@ -83,7 +83,7 @@ def test_overlay_tracks_marker_trail_label():
 
     class FakeAx:
         def __init__(self):
-            self.c = {"projscatter": 0, "projplot": 0, "projtext": 0}
+            self.c = {"projscatter": 0, "projplot": 0}
 
         def projscatter(self, *a, **k):
             self.c["projscatter"] += 1
@@ -91,22 +91,19 @@ def test_overlay_tracks_marker_trail_label():
         def projplot(self, *a, **k):
             self.c["projplot"] += 1
 
-        def projtext(self, *a, **k):
-            self.c["projtext"] += 1
-
     tracks = {"SAT-A": [(0, 10.0, -20.0, 1.0), (1, 12.0, -19.0, 1.0)]}
 
     ax = FakeAx()
     _overlay_tracks(ax, tracks, 0)  # frame 0: marker + label, no trail yet
-    assert ax.c == {"projscatter": 1, "projplot": 0, "projtext": 1}
+    assert ax.c == {"projscatter": 1, "projplot": 0}
 
     ax = FakeAx()
     _overlay_tracks(ax, tracks, 1)  # frame 1: marker + label + trail (>1 past point)
-    assert ax.c == {"projscatter": 1, "projplot": 1, "projtext": 1}
+    assert ax.c == {"projscatter": 1, "projplot": 1}
 
     ax = FakeAx()
     _overlay_tracks(ax, tracks, 5)  # satellite absent at frame 5: nothing drawn
-    assert ax.c == {"projscatter": 0, "projplot": 0, "projtext": 0}
+    assert ax.c == {"projscatter": 0, "projplot": 0}
 
 
 def test_render_frames_overlay_uses_axes_not_drawing_wrappers(tmp_path, monkeypatch):
@@ -124,7 +121,6 @@ def test_render_frames_overlay_uses_axes_not_drawing_wrappers(tmp_path, monkeypa
 
     monkeypatch.setattr(hp, "projscatter", boom)
     monkeypatch.setattr(hp, "projplot", boom)
-    monkeypatch.setattr(hp, "projtext", boom)
 
     nside = 8
     npix = 12 * nside * nside
