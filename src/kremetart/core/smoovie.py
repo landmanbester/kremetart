@@ -1,8 +1,11 @@
 """Render a TART HDF sequence into a HEALPix all-sky movie.
 
-Reads each HDF snapshot, images one representative sub-integration onto the fixed equatorial
-HEALPix grid (full sphere), renders Mollweide frames with a fixed colour scale, and encodes them
-to mp4 with ffmpeg. See docs/superpowers/specs/2026-06-15-smoovie-design.md.
+Images every sub-integration across the input HDFs onto the fixed equatorial (ICRS) HEALPix grid
+(full sphere), all centered on a single common phase direction (the local zenith RA/Dec at the
+global mid-time, reusable as the shared field center for multi-TART mosaicking). Renders Mollweide
+frames with a fixed colour scale and encodes them to mp4 with ffmpeg. See
+docs/superpowers/specs/2026-06-16-smoovie-common-frame-design.md (amending the original
+docs/superpowers/specs/2026-06-15-smoovie-design.md).
 """
 
 from __future__ import annotations
