@@ -101,9 +101,15 @@ Then image each sub-integration as today. `image_frame` and the DFT math are unt
 ### 4.3 Validation oracle
 
 The test data ships `vis_2026-06-09_08_11_43.476804.ms` (calibrated) alongside
-`…_nocal.ms` (raw). `tart2ms` produces the calibrated MS by applying the same gain solution, so the
-corrected visibilities should match the calibrated `.ms` DATA column for matching baselines — a
-strong oracle for an opt-in test.
+`…_nocal.ms` (raw). `tart2ms` produces the calibrated MS by applying the same gain solution.
+
+**Confirmed convention (during implementation):** `tart2ms` writes the *weighted corrected*
+visibility into DATA, i.e. `DATA = V_corr · |g_p·g_q|² = V_raw · conj(g_p)·g_q`. Our
+`_correct_file_gains` returns `(V_corr, W_corr)` with `W_corr = |g_p·g_q|²`, and the imaging step
+forms `W_corr · V_corr` — which equals that DATA. The oracle therefore compares **`vis_c · wgt_c`**
+(not `vis_c` alone) against the `.ms` DATA, and they match to a median residual ≈ 0.006 (the small
+tail is the known ~0.3% ITRF baseline-position convention difference, same as `test_rephasing.py`).
+The MS WEIGHT column is a separate constant nominal value (≈0.95), unrelated to the gain weight.
 
 ## 5. Change 2 — satellite overlay
 
