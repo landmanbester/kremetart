@@ -3,7 +3,7 @@
 **Date:** 2026-06-16
 **Status:** Approved (brainstorming) — ready for implementation plan (Phase 1 first)
 **Scope:** Make `kremetart smoovie` fast and re-runnable. **Phase 1** (implement now, CPU path): cache
-the TART catalogue to a sidecar so re-runs are network-free, and add a profiling harness to locate the
+the TART catalogue to a time-indexed xarray dataset so re-runs are network-free, and add a profiling harness to locate the
 real bottlenecks. **Phase 2** (architecture captured here; its implementation plan written *after*
 Phase 1 profiling): restructure `smoovie` into a Holoscan GPU application mirroring
 `core/stream_msv4.py`, with a pure-GPU `HealpixDFTOperator`, all host work in a prepare step + reader,
@@ -38,29 +38,56 @@ pattern. Movie creation (the ffmpeg call) happens **outside** `app.run()` in the
 2. **`C(t)` precomputed on the host; `b_rot(t)` streamed.** `b_rot(t) = R(t)ᵀ · b_itrs` is computed
    with astropy (vectorised over all frames) in the prepare step, so `HealpixDFTOperator.compute()` is
    pure cupy (just the DFT). Keeps current astropy accuracy; no GPU-native `C(t)` polynomial.
-3. **Catalogue cache = sidecar file** keyed by `(lat, lon, elevation_deg, datestr)`. Separate from the
-   zarr, inspectable, portable.
+3. **Catalogue cache = a time-indexed xarray `Dataset` (zarr).** Stores the raw catalogue
+   (`source_name`/`source_elevation_deg`/`source_azimuth_deg`/`source_flux_jy`/`source_height_m`) on a
+   `(time, source)` grid, indexed by a `time` coordinate. This both avoids re-fetching and gives a
+   coordinate that aligns directly with the stream passing through the Holoscan app in Phase 2.
 4. **Sequencing: cache + profile first**, then finalise Phase 2 depth from the measured numbers.
 
 ## 3. Phase 1 — caching + profiling (CPU path, implement now)
 
-### 3.1 Catalogue cache (`utils/satellites.py`)
+### 3.1 Catalogue cache (`utils/satellites.py`) — time-indexed xarray dataset
 
 `satellite_tracks(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_path=None)` gains an
-optional `cache_path`:
+optional `cache_path`. The cache is an **xarray `Dataset` written to zarr** (consistent with the
+project's xarray/zarr pattern and reusable for stream alignment in Phase 2), not a flat JSON.
 
-- The cache is a JSON object mapping a composite string key
-  `f"{lat:.6f}:{lon:.6f}:{elevation_deg}:{datestr}"` → the catalogue source list (the list of
-  `{name, az, el, jy, r}` dicts the API returns).
-- On entry, load `cache_path` if it exists. Per frame: key present → use cached sources (no fetch);
-  absent → call `fetch(...)`, store under the key. Write the (updated) cache back to `cache_path` at the
-  end if anything changed.
-- The injectable `fetch` seam is unchanged, so tests still run without the network. A cache hit must
-  **not** call `fetch` (verified by call-count in tests).
-- JSON (not parquet): the payload is small lists of dicts; JSON is simple and inspectable.
+**Schema.** Dimensions `(time, source)`; the `source` axis is padded to the maximum source count over
+all frames (brightest-first; empty slots carry `""` / `NaN`). Data variables mirror `read_hdf_as_xr`:
+
+| Variable | Dims | From API field |
+|---|---|---|
+| `source_name` | `(time, source)` | `name` (string; `""` for padding) |
+| `source_elevation_deg` | `(time, source)` | `el` (deg) |
+| `source_azimuth_deg` | `(time, source)` | `az` (deg) |
+| `source_flux_jy` | `(time, source)` | `jy` |
+| `source_height_m` | `(time, source)` | `r` |
+
+Coordinates: **`time` = per-frame unix seconds** (the same convention as `main.time` and the Phase-2
+MSv4 zarr), plus a secondary `datestr` coord (the ISO string queried) for traceability and cache
+lookup. Attributes: `site_latitude_deg`, `site_longitude_deg`, `elevation_deg` — the cache's identity.
+
+The **raw** catalogue (az/el, topocentric) is cached, **not** the ICRS conversion: re-fetching is the
+expensive (network) step, whereas the az/el→ICRS transform is cheap, deterministic, and stays in
+`satellite_tracks`.
+
+**Tracking the time axis (the alignment question).** Because the dataset is indexed by `time`, a frame
+at timestamp `t` selects its sources with `cat.sel(time=t)`. In Phase 2 the catalogue dataset shares the
+stream's `time` coordinate, so per-frame overlay data aligns with the dirty-map stream by a plain
+coordinate join — no positional bookkeeping.
+
+**Caching logic.** On entry, open `cache_path` if present and its attrs match `(lat, lon,
+elevation_deg)`, yielding a `datestr → source-list` lookup. Per frame: `datestr` present → reuse (no
+fetch); absent → `fetch(...)`. If anything was fetched, reassemble the `(time, source)` dataset over all
+frames and rewrite `cache_path`. The injectable `fetch` seam is unchanged; a full cache hit must **not**
+call `fetch` (asserted by call-count in tests).
+
+**Return value unchanged.** `satellite_tracks` still returns `dict[name] -> [(frame_index, ra_deg,
+dec_deg, flux_jy)]` for the renderer — derived by grouping the per-frame sources on `source_name` and
+converting az/el→ICRS — so `render_frames` / `_overlay_tracks` are untouched.
 
 `core/smoovie.smoovie` gains `catalog_cache: str | None = None`; when `overlay_catalog` is set it passes
-`cache_path` (defaulting to `<movie>.catalog.json` when the option is unset) into `satellite_tracks`.
+`cache_path` (defaulting to `<movie>.catalog.zarr` when unset) into `satellite_tracks`.
 
 ### 3.2 Profiling harness (`core/smoovie.py`)
 
@@ -80,7 +107,7 @@ optional `cache_path`:
 
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
-| `catalog_cache` | `str \| None` | `None` | Sidecar cache path; `None` → `<movie>.catalog.json`. |
+| `catalog_cache` | `str \| None` | `None` | Catalogue cache zarr path; `None` → `<movie>.catalog.zarr`. |
 | `profile` | `bool` | `False` | Print per-stage timing summary. |
 | `nframes` | `int \| None` | `None` | Cap frames imaged/rendered (profiling/preview aid). |
 
@@ -165,10 +192,12 @@ operator and the prepare-fed CPU path use.
 ## 6. Testing
 
 **Phase 1 (CPU, no network):**
-- Cache round-trip: first `satellite_tracks` call with a `cache_path` writes the file; a second call with
-  the same `cache_path` and a `fetch` that asserts it is **never called** returns identical tracks.
-- Cache keying: different `(lat, lon, elevation_deg, datestr)` produce distinct entries; a changed
-  `elevation_deg` is a cache miss.
+- Cache round-trip: first `satellite_tracks` call with a `cache_path` writes a valid zarr `Dataset`
+  (correct dims `(time, source)`, the five `source_*` variables, `time` coord in unix seconds, site +
+  `elevation_deg` attrs); a second call with the same `cache_path` and a `fetch` that asserts it is
+  **never called** returns identical tracks.
+- Cache keying / time axis: a changed `elevation_deg` (attr mismatch) is a cache miss → refetch; the
+  cached `time` coordinate matches the frame timestamps so `cat.sel(time=t)` resolves each frame.
 - Profiling harness smoke: `smoovie(..., profile=True, nframes=2)` runs, prints a stage summary, and
   produces a valid (short) movie; `nframes` truncates the frame count.
 - Round-trip: `test_roundtrip.py::test_roundtrip_smoovie` regenerated for the three new CLI params.
