@@ -71,6 +71,32 @@ def test_frame_dirty_maps_correct_gains_finite():
         assert np.all(np.isfinite(m))
 
 
+def test_render_frames_overlays_tracks(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    import healpy as hp
+
+    import kremetart.core.smoovie as sm
+
+    calls = {"scatter": 0, "plot": 0, "text": 0}
+    monkeypatch.setattr(hp, "projscatter", lambda *a, **k: calls.__setitem__("scatter", calls["scatter"] + 1))
+    monkeypatch.setattr(hp, "projplot", lambda *a, **k: calls.__setitem__("plot", calls["plot"] + 1))
+    monkeypatch.setattr(hp, "projtext", lambda *a, **k: calls.__setitem__("text", calls["text"] + 1))
+
+    nside = 8
+    npix = 12 * nside * nside
+    maps = [np.arange(npix, dtype=float), np.arange(npix, dtype=float) + 1.0]
+    stamps = ["t0 UTC", "t1 UTC"]
+    # SAT-A is present in both frames; the trailing line only appears once there are >1 past points.
+    tracks = {"SAT-A": [(0, 10.0, -20.0, 1.0), (1, 12.0, -19.0, 1.0)]}
+
+    pngs = sm.render_frames(maps, stamps, nside, "inferno", tmp_path, rot=(0.0, -30.0), tracks=tracks)
+
+    assert len(pngs) == 2
+    assert calls["scatter"] == 2  # one marker per frame
+    assert calls["text"] == 2  # one label per frame
+    assert calls["plot"] == 1  # trail drawn only on frame 1 (needs >1 past point)
+
+
 def test_smoovie_produces_movie(tmp_path):
     pytest.importorskip("matplotlib")
     if shutil.which("ffmpeg") is None:

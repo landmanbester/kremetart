@@ -125,13 +125,48 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, xp=n
     return maps, stamps, pix_vec
 
 
+def _overlay_tracks(hp, tracks, frame_index):
+    """Draw each satellite present in ``frame_index``: trailing line, current marker, name label.
+
+    ``tracks`` maps name -> list of ``(frame_index, ra_deg, dec_deg, flux_jy)``. Coordinates are
+    plotted with ``lonlat=True`` (degrees, ``lon == RA``) so healpy applies the active Mollweide
+    ``rot`` and the overlay lands in the same projected ICRS frame as the imaged pixels.
+    """
+    for name, points in tracks.items():
+        trail = [(ra, dec) for (f, ra, dec, _jy) in points if f <= frame_index]
+        current = [(ra, dec) for (f, ra, dec, _jy) in points if f == frame_index]
+        if not current:
+            continue  # satellite not above the cutoff in this frame
+        if len(trail) > 1:
+            hp.projplot(
+                [ra for ra, _ in trail],
+                [dec for _, dec in trail],
+                lonlat=True,
+                color="cyan",
+                linewidth=0.7,
+                alpha=0.6,
+            )
+        ra0, dec0 = current[0]
+        hp.projscatter([ra0], [dec0], lonlat=True, color="cyan", marker="x", s=30)
+        hp.projtext(ra0, dec0, name, lonlat=True, color="cyan", fontsize=6)
+
+
 def render_frames(
-    maps, timestamps, nside: int, cmap: str, outdir, *, rot: tuple[float, float] | None = None, nest: bool = True
+    maps,
+    timestamps,
+    nside: int,
+    cmap: str,
+    outdir,
+    *,
+    rot: tuple[float, float] | None = None,
+    nest: bool = True,
+    tracks=None,
 ):
     """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths.
 
     ``rot=(lon, lat)`` (degrees) re-centers every frame on the common phase direction so the observed
-    patch sits stably at the projection center across the movie.
+    patch sits stably at the projection center across the movie. ``tracks`` (if given) overlays
+    per-satellite ICRS trajectories (trailing line + current marker + name label) on each frame.
     """
     import matplotlib
 
@@ -146,6 +181,8 @@ def render_frames(
     for i, (m, ts) in enumerate(zip(maps, timestamps)):
         hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax), rot=rot)
         hp.graticule()
+        if tracks:
+            _overlay_tracks(hp, tracks, i)
         out = outdir / f"frame_{i:04d}.png"
         plt.savefig(out, dpi=100)
         plt.close("all")
