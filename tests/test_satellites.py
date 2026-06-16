@@ -86,3 +86,78 @@ def test_satellite_tracks_skips_empty_frames():
 
     tracks = satellite_tracks(paths, 89.0, fetch=fake_fetch)
     assert tracks == {}
+
+
+def test_satellite_tracks_caches_and_reuses(tmp_path):
+    from kremetart.utils.satellites import satellite_tracks
+
+    paths = _hdfs()[:1]
+    cache = tmp_path / "cat.zarr"
+    calls = {"n": 0}
+
+    def fetch(lon, lat, datestr, elevation_deg):
+        calls["n"] += 1
+        return [{"name": "SAT-A", "az": 30.0, "el": 60.0, "jy": 1.0, "r": 7.0e6}]
+
+    first = satellite_tracks(paths, 45.0, fetch=fetch, cache_path=str(cache))
+    assert calls["n"] > 0 and cache.exists()
+
+    def fetch_forbidden(lon, lat, datestr, elevation_deg):
+        raise AssertionError("cache hit must not fetch")
+
+    second = satellite_tracks(paths, 45.0, fetch=fetch_forbidden, cache_path=str(cache))
+    assert first == second  # identical tracks, no network on the second run
+
+
+def test_catalog_cache_schema(tmp_path):
+    xr = pytest.importorskip("xarray")
+    from kremetart.utils.satellites import _frame_times_and_site, satellite_tracks
+
+    paths = _hdfs()[:1]
+    cache = tmp_path / "cat.zarr"
+
+    def fetch(lon, lat, datestr, elevation_deg):
+        return [
+            {"name": "SAT-A", "az": 30.0, "el": 60.0, "jy": 1.0, "r": 7.0e6},
+            {"name": "SAT-B", "az": 10.0, "el": 50.0, "jy": 0.5, "r": 8.0e6},
+        ]
+
+    satellite_tracks(paths, 45.0, fetch=fetch, cache_path=str(cache))
+    ds = xr.open_zarr(str(cache))
+    assert set(ds.dims) == {"time", "source"}
+    for v in ("source_name", "source_elevation_deg", "source_azimuth_deg", "source_flux_jy", "source_height_m"):
+        assert v in ds.data_vars
+    assert ds.attrs["elevation_deg"] == 45.0
+    times, *_ = _frame_times_and_site(paths)
+    np.testing.assert_allclose(ds.time.values, times)
+
+
+def test_catalog_cache_miss_on_elevation_change(tmp_path):
+    from kremetart.utils.satellites import satellite_tracks
+
+    paths = _hdfs()[:1]
+    cache = tmp_path / "cat.zarr"
+    calls = {"n": 0}
+
+    def fetch(lon, lat, datestr, elevation_deg):
+        calls["n"] += 1
+        return [{"name": "SAT-A", "az": 30.0, "el": 60.0, "jy": 1.0, "r": 7.0e6}]
+
+    satellite_tracks(paths, 45.0, fetch=fetch, cache_path=str(cache))
+    after_first = calls["n"]
+    satellite_tracks(paths, 30.0, fetch=fetch, cache_path=str(cache))  # different elevation -> miss
+    assert calls["n"] > after_first
+
+
+def test_satellite_tracks_nframes_caps(tmp_path):
+    from kremetart.utils.satellites import satellite_tracks
+
+    paths = _hdfs()[:1]
+    calls = {"n": 0}
+
+    def fetch(lon, lat, datestr, elevation_deg):
+        calls["n"] += 1
+        return [{"name": "SAT-A", "az": 30.0, "el": 60.0, "jy": 1.0, "r": 7.0e6}]
+
+    satellite_tracks(paths, 45.0, fetch=fetch, nframes=2)
+    assert calls["n"] == 2
