@@ -1,5 +1,6 @@
 """Tests for the smoovie core (HEALPix movie generation)."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -232,3 +233,44 @@ def test_smoovie_no_overlay_passes_none_tracks(tmp_path, monkeypatch):
 
     sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
     assert captured["tracks"] is None
+
+
+@pytest.mark.skipif(
+    os.environ.get("KREMETART_MS_ORACLE") != "1",
+    reason="opt-in: cross-checks tart2ms calibration convention (set KREMETART_MS_ORACLE=1)",
+)
+def test_weighted_corrected_vis_matches_calibrated_ms():
+    """tart2ms writes the *weighted* corrected visibility into DATA: ``V_corr * |g_p g_q|**2``.
+
+    ``_correct_file_gains`` returns ``(V_corr, W_corr)`` with ``W_corr = |g_p g_q|**2``, and the
+    imaging step forms ``W_corr * V_corr`` -- which equals ``V_raw * conj(g_p) * g_q``, exactly the
+    calibrated DATA tart2ms writes. (The MS WEIGHT column is a separate constant nominal value, not
+    this gain weight.) The small residual tail is the known ~0.3% ITRF baseline-position convention
+    difference -- the same source as the ~cm UVW tolerance in ``test_rephasing.py``.
+    """
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_ms")  # registers the "xarray-ms:msv2" engine
+
+    from kremetart.core.smoovie import _correct_file_gains, _partition
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    hdf = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
+    ms = _DATA / "vis_2026-06-09_08_11_43.476804.ms"  # calibrated (NOT _nocal)
+    if not (hdf.exists() and ms.exists()):
+        pytest.skip("HDF or calibrated MS not present")
+
+    node = _partition(read_hdf_as_msv4(hdf))
+    main = node.ds
+    vis = np.asarray(main.VISIBILITY.values)[..., 0]
+    wgt = np.asarray(main.WEIGHT.values)[..., 0]
+    vis_c, wgt_c = _correct_file_gains(node, vis, wgt)
+
+    ref = _partition(xr.open_datatree(str(ms), engine="xarray-ms:msv2"))
+    ref_vis = np.asarray(ref.ds.VISIBILITY.values)[..., 0]
+
+    # Compare only weighted baselines (dead antennas are zeroed on our side); the MSv4 reader and
+    # tart2ms share baseline ordering (see test_rephasing.py), so this is an element-wise compare.
+    mask = wgt > 0
+    resid = np.abs((vis_c * wgt_c)[mask] - ref_vis[mask])
+    assert np.median(resid) < 0.015
+    assert np.percentile(resid, 95) < 0.05
