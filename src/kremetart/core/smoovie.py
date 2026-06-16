@@ -70,7 +70,7 @@ def common_phase_direction(hdf_paths) -> tuple[float, float]:
 
 
 def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
-    """Return (maps, timestamps, pix_vec): one full-sphere dirty map per HDF (mid sub-integration).
+    """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
@@ -78,8 +78,8 @@ def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
         xp: array module (numpy by default).
 
     Returns:
-        ``(maps, timestamps, pix_vec)`` -- list of ``(npix,)`` real maps, list of UTC strings,
-        and the ``(npix, 3)`` pixel unit vectors.
+        ``(maps, timestamps, pix_vec)`` -- list of ``(npix,)`` real maps (one per sub-integration,
+        across all files, in order), list of UTC strings, and the ``(npix, 3)`` pixel unit vectors.
     """
     from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
     from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
@@ -91,14 +91,14 @@ def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
         node = _partition(read_hdf_as_msv4(path))
         main = node.ds
         times = np.asarray(main.time.values)
-        mid = times.size // 2
         bl = itrs_baselines(node, xp)  # (nbl, 3)
-        vis = np.asarray(main.VISIBILITY.values)[mid : mid + 1, :, :, 0]  # drop single-pol axis
-        wgt = np.asarray(main.WEIGHT.values)[mid : mid + 1, :, :, 0]
+        vis = np.asarray(main.VISIBILITY.values)[..., 0]  # (n_time, nbl, nchan), drop single-pol axis
+        wgt = np.asarray(main.WEIGHT.values)[..., 0]
         freqs = np.asarray(main.frequency.values)
-        dmap = image_frame(vis, wgt, times[mid : mid + 1], bl, pix_vec, freqs, xp=xp)
-        maps.append(np.asarray(dmap))
-        stamps.append(_utc(times[mid]))
+        for k in range(times.size):
+            dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
+            maps.append(np.asarray(dmap))
+            stamps.append(_utc(times[k]))
     return maps, stamps, pix_vec
 
 

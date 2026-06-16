@@ -21,12 +21,17 @@ def _hdfs():
     return paths
 
 
-def test_frame_dirty_maps_one_finite_map_per_hdf():
-    paths = _hdfs()[:3]
-    nside = 32
+def test_frame_dirty_maps_one_frame_per_subintegration():
+    from kremetart.core.smoovie import _partition
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    paths = _hdfs()[:2]
+    nside = 16
+    expected = sum(int(_partition(read_hdf_as_msv4(p)).ds.time.size) for p in paths)
     maps, stamps, pix = frame_dirty_maps(paths, nside)
     npix = 12 * nside * nside
-    assert len(maps) == len(stamps) == 3
+    assert len(maps) == len(stamps) == expected
+    assert expected > len(paths)  # genuinely per-slice, not per-file
     for m in maps:
         assert m.shape == (npix,)
         assert np.all(np.isfinite(m))
