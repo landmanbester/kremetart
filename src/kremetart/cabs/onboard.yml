@@ -5,6 +5,6 @@ cabs:
     name: onboard
     info:
       Print setup instructions for CI/CD, PyPI publishing, and GitHub configuration.
-    image: ghcr.io/landmanbester/kremetart:actually_make_movie
+    image: ghcr.io/landmanbester/kremetart:latest
     inputs: {}
     outputs: {}
