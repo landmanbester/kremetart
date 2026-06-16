@@ -171,3 +171,94 @@ class ResultWriterOperator(Operator):
     def stop(self):
         # need to compute the mean here
         pass
+
+
+class HealpixZarrReaderOperator(Operator):
+    """Stream a prepared imaging zarr (VISIBILITY, WEIGHT, B_ROT, time) one frame at a time to the GPU.
+
+    Reads the host prepare-step output (:func:`kremetart.core.smoovie_prepare.prepare_msv4_zarr`).
+    Unlike :class:`XarrayZarrReaderOperator` it carries the precomputed ``B_ROT`` and drops UVW/FLAG
+    (the HEALPix imager does not need them).
+    """
+
+    def __init__(self, fragment, *args, zarr_path: str, **kwargs):
+        self.zarr_path = zarr_path
+        self.current_index = 0
+        self.ntime = None
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.output("VISIBILITY")
+        spec.output("WEIGHT")
+        spec.output("B_ROT")
+        spec.output("time")
+
+    def start(self):
+        self.dataset = xr.open_zarr(self.zarr_path)
+        self.ntime = self.dataset["time"].size
+        self.current_index = 0
+
+    def compute(self, op_input, op_output, context):
+        if self.current_index >= self.ntime:
+            return
+        s = self.dataset.isel({"time": slice(self.current_index, self.current_index + 1)})
+        op_output.emit(hs.as_tensor(cp.asarray(s["VISIBILITY"].values)), "VISIBILITY")
+        op_output.emit(hs.as_tensor(cp.asarray(s["WEIGHT"].values)), "WEIGHT")
+        op_output.emit(hs.as_tensor(cp.asarray(s["B_ROT"].values)), "B_ROT")
+        op_output.emit(hs.as_tensor(cp.asarray(s["time"].values)), "time")
+        self.current_index += 1
+
+    def stop(self):
+        pass
+
+
+class HealpixWriterOperator(Operator):
+    """Write per-frame HEALPix dirty maps to a ``(TIME, PIX)`` zarr (dask scaffold + region="auto").
+
+    Mirrors :class:`ResultWriterOperator`'s scaffold-then-region-write pattern, but for a flat
+    ``(TIME, npix)`` HEALPix cube rather than a ``(STOKES, FREQ, TIME, Y, X)`` image cube.
+    """
+
+    def __init__(
+        self,
+        fragment,
+        ntime,
+        npix,
+        *args,
+        output_dataset: str = None,
+        out_times: NDArray = None,
+        **kwargs,
+    ):
+        self.output_dataset = output_dataset
+        self.ntime = ntime
+        self.npix = npix
+        self.out_times = out_times if out_times is not None else np.arange(ntime)
+        self.pix = np.arange(npix)
+        super().__init__(fragment, *args, **kwargs)
+
+    def start(self):
+        # dask scaffold: da.empty allocates no data, only the zarr structure to write regions into.
+        data_vars = {
+            "dirty": (("TIME", "PIX"), da.empty((self.ntime, self.npix), chunks=(1, self.npix), dtype=np.float32)),
+        }
+        ds = xr.Dataset(
+            data_vars=data_vars,
+            coords={"TIME": (("TIME",), self.out_times), "PIX": (("PIX",), self.pix)},
+        )
+        ds.to_zarr(self.output_dataset, mode="w", compute=True)
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("cube")
+        spec.input("time_out")
+
+    def compute(self, op_input, op_output, context):
+        cube = cp.asnumpy(cp.asarray(op_input.receive("cube")))  # (1, npix)
+        time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
+        dso = xr.Dataset(
+            data_vars={"dirty": (("TIME", "PIX"), cube.astype(np.float32))},
+            coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
+        )
+        dso.to_zarr(self.output_dataset, region="auto")
+
+    def stop(self):
+        pass
