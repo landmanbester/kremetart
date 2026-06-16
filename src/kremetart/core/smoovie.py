@@ -227,6 +227,9 @@ def smoovie(
     cmap: str = "inferno",
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
+    correct_gains: bool = False,
+    overlay_catalog: bool = False,
+    catalog_elevation_deg: float = 45.0,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
 
@@ -234,6 +237,11 @@ def smoovie(
     shared phase direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local
     zenith RA/Dec at the global mid-time (:func:`common_phase_direction`); supply both to override
     (the multi-TART mosaic hook). Supplying only one raises ``ValueError``.
+
+    ``correct_gains`` divides the visibilities by the per-antenna gain product (TART's own solution)
+    before imaging. ``overlay_catalog`` overlays each catalogue satellite above ``catalog_elevation_deg``
+    (degrees) as a trailing track + marker + label on every frame; it requires network access to the
+    TART catalogue API.
     """
     import tempfile
 
@@ -248,8 +256,13 @@ def smoovie(
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
     if phase_ra_deg is None:
         phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
-    maps, stamps, _ = frame_dirty_maps(hdf_paths, nside)
+    maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains)
+    tracks = None
+    if overlay_catalog:
+        from kremetart.utils.satellites import satellite_tracks
+
+        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg)
     with tempfile.TemporaryDirectory() as td:
-        pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg))
+        pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
         encode_movie(pngs, movie, fps)
     return movie

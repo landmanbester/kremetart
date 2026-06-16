@@ -152,7 +152,7 @@ def test_smoovie_honors_explicit_phase_direction(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
         captured["rot"] = rot
         return [Path("frame_0000.png")]
 
@@ -178,7 +178,7 @@ def test_smoovie_auto_phase_direction_used(tmp_path, monkeypatch):
     monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (123.0, 45.0))
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
         captured["rot"] = rot
         return [Path("frame_0000.png")]
 
@@ -186,3 +186,49 @@ def test_smoovie_auto_phase_direction_used(tmp_path, monkeypatch):
 
     sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
     assert captured["rot"] == (123.0, 45.0)
+
+
+def test_smoovie_overlay_passes_tracks(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+    import kremetart.utils.satellites as sat
+
+    _hdfs()  # need a non-empty glob; heavy steps are monkeypatched out
+    captured = {}
+
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+    monkeypatch.setattr(sat, "satellite_tracks", lambda paths, elev, **k: {"SAT": [(0, 1.0, 2.0, 1.0)]})
+
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+        captured["tracks"] = tracks
+        return [Path("frame_0000.png")]
+
+    monkeypatch.setattr(sm, "render_frames", fake_render)
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, overlay_catalog=True, catalog_elevation_deg=30.0)
+    assert captured["tracks"] == {"SAT": [(0, 1.0, 2.0, 1.0)]}
+
+
+def test_smoovie_no_overlay_passes_none_tracks(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+
+    _hdfs()
+    captured = {}
+
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+        captured["tracks"] = tracks
+        return [Path("frame_0000.png")]
+
+    monkeypatch.setattr(sm, "render_frames", fake_render)
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
+    assert captured["tracks"] is None
