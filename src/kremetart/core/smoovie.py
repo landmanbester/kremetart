@@ -111,7 +111,7 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nfra
 
     pix_vec = make_pixel_grid(nside, xp=xp)
     maps, stamps = [], []
-    for path in hdf_paths:
+    for p, path in enumerate(hdf_paths):
         if nframes is not None and len(maps) >= nframes:
             break
         node = _partition(read_hdf_as_msv4(path))
@@ -124,6 +124,7 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nfra
         if correct_gains:
             vis, wgt = _correct_file_gains(node, vis, wgt, xp=xp)
         for k in range(times.size):
+            print(f"Done {k}/{times.size} sub-integrations for path {p} out of {len(hdf_paths)} total paths")
             if nframes is not None and len(maps) >= nframes:
                 break
             dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
@@ -160,7 +161,6 @@ def _overlay_tracks(ax, tracks, frame_index):
             )
         ra0, dec0 = current[0]
         ax.projscatter([ra0], [dec0], lonlat=True, color="cyan", marker="x", s=30)
-        ax.projtext(ra0, dec0, name, lonlat=True, color="cyan", fontsize=6)
 
 
 def render_frames(
@@ -294,10 +294,12 @@ def smoovie(
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
     timings: list[tuple[str, float]] = []
 
+    print("Getting common phase center")
     with _stage_timer("phase_direction", timings):
         if phase_ra_deg is None:
             phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
 
+    print("Making dirty maps")
     with _stage_timer("imaging", timings):
         maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
 
@@ -306,12 +308,15 @@ def smoovie(
         from kremetart.utils.satellites import satellite_tracks
 
         cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
+        print(f"Getting satellite tracks (cache_path={cache_path})")
         with _stage_timer("catalog", timings):
             tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
     with tempfile.TemporaryDirectory() as td:
+        print(f"Rendering frames to {td}")
         with _stage_timer("render", timings):
             pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
+        print("Encoding movie")
         with _stage_timer("encode", timings):
             encode_movie(pngs, movie, fps)
 
