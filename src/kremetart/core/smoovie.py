@@ -102,8 +102,14 @@ def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
     return maps, stamps, pix_vec
 
 
-def render_frames(maps, timestamps, nside: int, cmap: str, outdir, *, nest: bool = True):
-    """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths."""
+def render_frames(
+    maps, timestamps, nside: int, cmap: str, outdir, *, rot: tuple[float, float] | None = None, nest: bool = True
+):
+    """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths.
+
+    ``rot=(lon, lat)`` (degrees) re-centers every frame on the common phase direction so the observed
+    patch sits stably at the projection center across the movie.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -115,7 +121,7 @@ def render_frames(maps, timestamps, nside: int, cmap: str, outdir, *, nest: bool
     vmin, vmax = np.percentile(stacked, [1.0, 99.0])
     paths = []
     for i, (m, ts) in enumerate(zip(maps, timestamps)):
-        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax))
+        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax), rot=rot)
         hp.graticule()
         out = outdir / f"frame_{i:04d}.png"
         plt.savefig(out, dpi=100)
@@ -153,19 +159,37 @@ def encode_movie(png_paths, movie, fps: int):
     return movie
 
 
-def smoovie(hdf_dir, movie, nside: int = 128, fps: int = 2, cmap: str = "inferno"):
-    """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path."""
+def smoovie(
+    hdf_dir,
+    movie,
+    nside: int = 128,
+    fps: int = 2,
+    cmap: str = "inferno",
+    phase_ra_deg: float | None = None,
+    phase_dec_deg: float | None = None,
+):
+    """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
+
+    Every sub-integration becomes a frame, all imaged into the common ICRS frame and centered on the
+    shared phase direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local
+    zenith RA/Dec at the global mid-time (:func:`common_phase_direction`); supply both to override
+    (the multi-TART mosaic hook). Supplying only one raises ``ValueError``.
+    """
     import tempfile
 
     if hdf_dir is None or movie is None:
         raise ValueError("hdf_dir and movie are required")
+    if (phase_ra_deg is None) != (phase_dec_deg is None):
+        raise ValueError("phase_ra_deg and phase_dec_deg must be given together (both or neither)")
     hdf_dir = Path(hdf_dir)
     movie = Path(movie)
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
     if not hdf_paths:
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
+    if phase_ra_deg is None:
+        phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
     maps, stamps, _ = frame_dirty_maps(hdf_paths, nside)
     with tempfile.TemporaryDirectory() as td:
-        pngs = render_frames(maps, stamps, nside, cmap, Path(td))
+        pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg))
         encode_movie(pngs, movie, fps)
     return movie

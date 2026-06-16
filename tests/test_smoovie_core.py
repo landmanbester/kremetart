@@ -73,3 +73,58 @@ def test_common_phase_direction_empty_raises():
 
     with pytest.raises(ValueError, match="no HDF files"):
         common_phase_direction([])
+
+
+def test_smoovie_requires_both_phase_components(tmp_path):
+    from kremetart.core.smoovie import smoovie
+
+    # Validation happens before any data access, so no HDFs are needed.
+    with pytest.raises(ValueError, match="both or neither"):
+        smoovie(hdf_dir=tmp_path, movie=tmp_path / "m.mp4", phase_ra_deg=10.0)
+
+
+def test_smoovie_honors_explicit_phase_direction(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+
+    _hdfs()  # need a non-empty glob; the heavy steps below are monkeypatched out
+    captured = {}
+
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True):
+        captured["rot"] = rot
+        return [Path("frame_0000.png")]
+
+    def fail_cpd(paths):
+        raise AssertionError("common_phase_direction must not be called when phase is supplied")
+
+    monkeypatch.setattr(sm, "render_frames", fake_render)
+    monkeypatch.setattr(sm, "common_phase_direction", fail_cpd)
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, phase_ra_deg=12.0, phase_dec_deg=-20.0)
+    assert captured["rot"] == (12.0, -20.0)
+
+
+def test_smoovie_auto_phase_direction_used(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+
+    _hdfs()
+    captured = {}
+
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (123.0, 45.0))
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True):
+        captured["rot"] = rot
+        return [Path("frame_0000.png")]
+
+    monkeypatch.setattr(sm, "render_frames", fake_render)
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
+    assert captured["rot"] == (123.0, 45.0)
