@@ -72,6 +72,12 @@ def test_frame_dirty_maps_correct_gains_finite():
         assert np.all(np.isfinite(m))
 
 
+def test_frame_dirty_maps_nframes_caps():
+    paths = _hdfs()  # multiple files; nframes caps the total frames produced
+    maps, stamps, pix = frame_dirty_maps(paths, 16, nframes=3)
+    assert len(maps) == len(stamps) == 3
+
+
 def test_render_frames_overlays_tracks(tmp_path, monkeypatch):
     pytest.importorskip("matplotlib")
     import healpy as hp

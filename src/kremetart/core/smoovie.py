@@ -89,13 +89,14 @@ def _correct_file_gains(node, vis, wgt, *, xp=np):
     return apply_inverse_gains(vis, wgt, gains, a1, a2, xp=xp)
 
 
-def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, xp=np):
+def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nframes: int | None = None, xp=np):
     """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
         correct_gains: divide vis/weights by the per-antenna gain product before imaging.
+        nframes: optional cap on the total number of frames produced (profiling/preview aid).
         xp: array module (numpy by default).
 
     Returns:
@@ -109,6 +110,8 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, xp=n
     pix_vec = make_pixel_grid(nside, xp=xp)
     maps, stamps = [], []
     for path in hdf_paths:
+        if nframes is not None and len(maps) >= nframes:
+            break
         node = _partition(read_hdf_as_msv4(path))
         main = node.ds
         times = np.asarray(main.time.values)
@@ -119,6 +122,8 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, xp=n
         if correct_gains:
             vis, wgt = _correct_file_gains(node, vis, wgt, xp=xp)
         for k in range(times.size):
+            if nframes is not None and len(maps) >= nframes:
+                break
             dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
             maps.append(np.asarray(dmap))
             stamps.append(_utc(times[k]))
