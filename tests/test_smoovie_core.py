@@ -44,3 +44,27 @@ def test_smoovie_produces_movie(tmp_path):
     out = tmp_path / "movie.mp4"
     smoovie(hdf_dir=_DATA, movie=out, nside=32, fps=2)
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_common_phase_direction_dec_matches_latitude():
+    pytest.importorskip("astropy")
+    paths = _hdfs()
+    from kremetart.core.smoovie import _partition, common_phase_direction
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    ra, dec = common_phase_direction(paths)
+    info = _partition(read_hdf_as_msv4(paths[0])).ds.attrs["observation_info"]
+    lat = info["site_latitude_deg"]
+    # The declination of the local zenith equals the observer's geodetic latitude, up to the
+    # geodetic-vs-geocentric difference (~0.2 deg). Independent physical check, not a re-derivation.
+    assert abs(dec - lat) < 0.3
+    assert 0.0 <= ra < 360.0
+    # Deterministic.
+    assert (ra, dec) == common_phase_direction(paths)
+
+
+def test_common_phase_direction_empty_raises():
+    from kremetart.core.smoovie import common_phase_direction
+
+    with pytest.raises(ValueError, match="no HDF files"):
+        common_phase_direction([])

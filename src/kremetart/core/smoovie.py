@@ -22,6 +22,53 @@ def _utc(unix_seconds) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def common_phase_direction(hdf_paths) -> tuple[float, float]:
+    """Single shared ICRS phase direction: the local zenith RA/Dec at the global mid-time.
+
+    Reads the first and last timestamps across all files, takes the midpoint, and converts the local
+    zenith (AltAz alt=90 deg) at that time to ICRS. Reusable as the common field center for
+    multi-TART mosaicking: compute once, hand the same value to every TART.
+
+    Args:
+        hdf_paths: ordered iterable of TART HDF paths.
+
+    Returns:
+        ``(ra_deg, dec_deg)`` of the local zenith at the global mid-time, in ICRS.
+
+    Raises:
+        ValueError: if ``hdf_paths`` is empty.
+    """
+    import astropy.units as u
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    t_lo = t_hi = None
+    info = None
+    for path in hdf_paths:
+        main = _partition(read_hdf_as_msv4(path)).ds
+        times = np.asarray(main.time.values)
+        lo, hi = float(times.min()), float(times.max())
+        t_lo = lo if t_lo is None else min(t_lo, lo)
+        t_hi = hi if t_hi is None else max(t_hi, hi)
+        # Site info comes from the first file; all inputs are assumed to share the same array site.
+        if info is None:
+            info = main.attrs["observation_info"]
+    if info is None:
+        raise ValueError("no HDF files provided")
+
+    t_mid = 0.5 * (t_lo + t_hi)
+    loc = EarthLocation(
+        lat=info["site_latitude_deg"] * u.deg,
+        lon=info["site_longitude_deg"] * u.deg,
+        height=info["site_altitude_m"] * u.m,
+    )
+    aa = AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=Time(t_mid, format="unix", scale="utc"), location=loc)
+    icrs = SkyCoord(aa).icrs
+    return float(icrs.ra.deg), float(icrs.dec.deg)
+
+
 def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
     """Return (maps, timestamps, pix_vec): one full-sphere dirty map per HDF (mid sub-integration).
 
