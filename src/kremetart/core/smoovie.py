@@ -10,7 +10,9 @@ docs/superpowers/specs/2026-06-15-smoovie-design.md).
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import time
 from pathlib import Path
 
 import numpy as np
@@ -224,6 +226,27 @@ def encode_movie(png_paths, movie, fps: int):
     return movie
 
 
+@contextlib.contextmanager
+def _stage_timer(name, timings):
+    """Record wall-clock seconds for a named stage into ``timings`` (a list of ``(name, seconds)``)."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings.append((name, time.perf_counter() - t0))
+
+
+def _print_profile(timings, nframes):
+    """Print a per-stage timing summary table to stdout."""
+    total = sum(dt for _, dt in timings) or 1.0
+    print("\n=== smoovie profile ===")
+    print(f"{'stage':<18}{'seconds':>10}{'%total':>9}{'ms/frame':>11}")
+    for name, dt in timings:
+        per_frame = f"{1000.0 * dt / nframes:.1f}" if nframes else "-"
+        print(f"{name:<18}{dt:>10.3f}{100.0 * dt / total:>8.1f}%{per_frame:>11}")
+    print(f"{'TOTAL':<18}{total:>10.3f}{100.0:>8.1f}%")
+
+
 def smoovie(
     hdf_dir,
     movie,
@@ -235,6 +258,9 @@ def smoovie(
     correct_gains: bool = False,
     overlay_catalog: bool = False,
     catalog_elevation_deg: float = 45.0,
+    catalog_cache: str | None = None,
+    profile: bool = False,
+    nframes: int | None = None,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
 
@@ -246,7 +272,9 @@ def smoovie(
     ``correct_gains`` divides the visibilities by the per-antenna gain product (TART's own solution)
     before imaging. ``overlay_catalog`` overlays each catalogue satellite above ``catalog_elevation_deg``
     (degrees) as a trailing track + marker + label on every frame; it requires network access to the
-    TART catalogue API.
+    TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
+    (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
+    caps the frames imaged/rendered (a profiling/preview aid).
     """
     import tempfile
 
@@ -259,15 +287,29 @@ def smoovie(
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
     if not hdf_paths:
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
-    if phase_ra_deg is None:
-        phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
-    maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains)
+    timings: list[tuple[str, float]] = []
+
+    with _stage_timer("phase_direction", timings):
+        if phase_ra_deg is None:
+            phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
+
+    with _stage_timer("imaging", timings):
+        maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
+
     tracks = None
     if overlay_catalog:
         from kremetart.utils.satellites import satellite_tracks
 
-        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg)
+        cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
+        with _stage_timer("catalog", timings):
+            tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
+
     with tempfile.TemporaryDirectory() as td:
-        pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
-        encode_movie(pngs, movie, fps)
+        with _stage_timer("render", timings):
+            pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
+        with _stage_timer("encode", timings):
+            encode_movie(pngs, movie, fps)
+
+    if profile:
+        _print_profile(timings, len(maps))
     return movie

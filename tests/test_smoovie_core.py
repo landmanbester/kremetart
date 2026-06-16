@@ -280,3 +280,83 @@ def test_weighted_corrected_vis_matches_calibrated_ms():
     resid = np.abs((vis_c * wgt_c)[mask] - ref_vis[mask])
     assert np.median(resid) < 0.015
     assert np.percentile(resid, 95) < 0.05
+
+
+def test_print_profile_outputs(capsys):
+    from kremetart.core.smoovie import _print_profile
+
+    _print_profile([("imaging", 2.0), ("render", 1.0)], nframes=4)
+    out = capsys.readouterr().out
+    assert "smoovie profile" in out
+    assert "imaging" in out and "render" in out and "TOTAL" in out
+
+
+def test_stage_timer_records():
+    from kremetart.core.smoovie import _stage_timer
+
+    timings = []
+    with _stage_timer("stage_a", timings):
+        pass
+    assert len(timings) == 1 and timings[0][0] == "stage_a" and timings[0][1] >= 0.0
+
+
+def test_smoovie_profile_prints(tmp_path, monkeypatch, capsys):
+    import kremetart.core.smoovie as sm
+
+    _hdfs()
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, profile=True)
+    out = capsys.readouterr().out
+    assert "smoovie profile" in out
+    assert "imaging" in out and "render" in out
+
+
+def test_smoovie_nframes_flows_to_imaging(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+
+    _hdfs()
+    captured = {}
+
+    def fake_fdm(paths, nside, **k):
+        captured.update(k)
+        return ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+
+    monkeypatch.setattr(sm, "frame_dirty_maps", fake_fdm)
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, nframes=7)
+    assert captured.get("nframes") == 7
+
+
+def test_smoovie_default_catalog_cache_path(tmp_path, monkeypatch):
+    import kremetart.core.smoovie as sm
+    import kremetart.utils.satellites as sat
+
+    _hdfs()
+    captured = {}
+
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
+    monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
+    monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
+
+    def fake_tracks(paths, elevation_deg, **k):
+        captured.update(k)
+        return {}
+
+    monkeypatch.setattr(sat, "satellite_tracks", fake_tracks)
+
+    movie = tmp_path / "m.mp4"
+    sm.smoovie(hdf_dir=_DATA, movie=movie, nside=1, overlay_catalog=True, nframes=3)
+    assert captured["cache_path"] == str(movie) + ".catalog.zarr"
+    assert captured["nframes"] == 3
