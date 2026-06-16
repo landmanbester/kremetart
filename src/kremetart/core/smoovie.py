@@ -72,12 +72,30 @@ def common_phase_direction(hdf_paths) -> tuple[float, float]:
     return float(icrs.ra.deg), float(icrs.dec.deg)
 
 
-def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
+def _correct_file_gains(node, vis, wgt, *, xp=np):
+    """Divide a file's vis/weight by the per-antenna gain product (``gain_xds.GAIN``).
+
+    Maps each baseline to its two antenna gains the same way :func:`itrs_baselines` maps
+    antennas, then delegates to :func:`kremetart.utils.gains.apply_inverse_gains`. The gain
+    snapshot is per-file (time-independent), so this runs once before the sub-integration loop.
+    """
+    from kremetart.utils.gains import apply_inverse_gains
+
+    antenna = node["antenna_xds"].to_dataset(inherit=False)
+    index = {name: i for i, name in enumerate(antenna.antenna_name.values)}
+    a1 = np.array([index[n] for n in node.ds.baseline_antenna1_name.values])
+    a2 = np.array([index[n] for n in node.ds.baseline_antenna2_name.values])
+    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
+    return apply_inverse_gains(vis, wgt, gains, a1, a2, xp=xp)
+
+
+def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, xp=np):
     """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
+        correct_gains: divide vis/weights by the per-antenna gain product before imaging.
         xp: array module (numpy by default).
 
     Returns:
@@ -98,6 +116,8 @@ def frame_dirty_maps(hdf_paths, nside: int, *, xp=np):
         vis = np.asarray(main.VISIBILITY.values)[..., 0]  # (n_time, nbl, nchan), drop single-pol axis
         wgt = np.asarray(main.WEIGHT.values)[..., 0]
         freqs = np.asarray(main.frequency.values)
+        if correct_gains:
+            vis, wgt = _correct_file_gains(node, vis, wgt, xp=xp)
         for k in range(times.size):
             dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
             maps.append(np.asarray(dmap))

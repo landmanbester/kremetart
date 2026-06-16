@@ -39,6 +39,38 @@ def test_frame_dirty_maps_one_frame_per_subintegration():
     assert "UTC" in stamps[0]
 
 
+def test_correct_file_gains_real_data():
+    from kremetart.core.smoovie import _correct_file_gains, _partition
+    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
+    node = _partition(read_hdf_as_msv4(_hdfs()[0]))
+    main = node.ds
+    vis = np.asarray(main.VISIBILITY.values)[..., 0]
+    wgt = np.asarray(main.WEIGHT.values)[..., 0]
+
+    vis_c, wgt_c = _correct_file_gains(node, vis, wgt)
+
+    assert vis_c.shape == vis.shape
+    assert np.all(np.isfinite(vis_c)) and np.all(np.isfinite(wgt_c))
+    # The correction must actually change non-trivial gains.
+    assert not np.allclose(vis_c, vis)
+    # Dead antennas (gain 0) -> zero-weight, zero-vis baselines (no inf/nan).
+    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
+    if np.any(gains == 0):
+        assert np.any(wgt_c == 0)
+
+
+def test_frame_dirty_maps_correct_gains_finite():
+    paths = _hdfs()[:1]
+    nside = 16
+    maps, stamps, pix = frame_dirty_maps(paths, nside, correct_gains=True)
+    npix = 12 * nside * nside
+    assert len(maps) == len(stamps) > 0
+    for m in maps:
+        assert m.shape == (npix,)
+        assert np.all(np.isfinite(m))
+
+
 def test_smoovie_produces_movie(tmp_path):
     pytest.importorskip("matplotlib")
     if shutil.which("ffmpeg") is None:
