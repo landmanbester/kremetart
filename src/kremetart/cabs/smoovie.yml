@@ -26,6 +26,14 @@ cabs:
         info:
           Matplotlib colormap.
         default: inferno
+      phase-ra-deg:
+        info:
+          Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.
+        dtype: Optional[float]
+      phase-dec-deg:
+        info:
+          Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.
+        dtype: Optional[float]
     outputs:
       movie:
         dtype: File

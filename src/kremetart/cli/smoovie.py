@@ -44,6 +44,18 @@ def smoovie(
             help="Matplotlib colormap.",
         ),
     ] = "inferno",
+    phase_ra_deg: Annotated[
+        float | None,
+        typer.Option(
+            help="Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.",
+        ),
+    ] = None,
+    phase_dec_deg: Annotated[
+        float | None,
+        typer.Option(
+            help="Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.",
+        ),
+    ] = None,
     movie: Annotated[
         File | None,
         typer.Option(
@@ -85,6 +97,8 @@ def smoovie(
                     nside=nside,
                     fps=fps,
                     cmap=cmap,
+                    phase_ra_deg=phase_ra_deg,
+                    phase_dec_deg=phase_dec_deg,
                     movie=movie,
                 ),
             )
@@ -98,6 +112,8 @@ def smoovie(
                 nside=nside,
                 fps=fps,
                 cmap=cmap,
+                phase_ra_deg=phase_ra_deg,
+                phase_dec_deg=phase_dec_deg,
                 movie=movie,
             )
             return
@@ -120,6 +136,8 @@ def smoovie(
             nside=nside,
             fps=fps,
             cmap=cmap,
+            phase_ra_deg=phase_ra_deg,
+            phase_dec_deg=phase_dec_deg,
             movie=movie,
         ),
         image=image,
