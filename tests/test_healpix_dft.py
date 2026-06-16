@@ -9,6 +9,7 @@ from kremetart.utils.healpix_dft import (
     dirty_map,
     equatorial_baselines,
     image_frame,
+    image_frame_prerotated,
     make_pixel_grid,
 )
 
@@ -131,3 +132,26 @@ def test_image_frame_recovers_source_through_ctime():
     assert dmap.shape == (pix.shape[0],)
     assert int(np.argmax(dmap)) == src
     np.testing.assert_allclose(dmap[src], 1.0, atol=1e-12)
+
+
+def test_image_frame_prerotated_matches_image_frame():
+    """The device-pure core equals the full image_frame (which now wraps it)."""
+    pytest.importorskip("astropy")
+    from kremetart.utils.healpix_dft import equatorial_baselines, image_frame
+
+    rng = np.random.default_rng(7)
+    nside = 8
+    pix = make_pixel_grid(nside, xp=np)
+    itrs_bl = rng.standard_normal((15, 3)) * 3.0
+    times = np.array([1.6e9, 1.6e9 + 60.0])
+    freqs = np.array([1.575e9])
+    nbl = itrs_bl.shape[0]
+    vis = rng.standard_normal((2, nbl, 1)) + 1j * rng.standard_normal((2, nbl, 1))
+    wgt = np.ones((2, nbl, 1))
+
+    ref = image_frame(vis, wgt, times, itrs_bl, pix, freqs, xp=np)
+    b_rot = equatorial_baselines(itrs_bl, times, xp=np)
+    got = image_frame_prerotated(vis, wgt, b_rot, pix, freqs, xp=np)
+
+    assert got.shape == (pix.shape[0],)
+    np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-12)

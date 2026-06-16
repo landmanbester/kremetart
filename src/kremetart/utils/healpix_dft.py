@@ -149,13 +149,44 @@ def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp:
     raise ValueError(f"unknown backend {backend!r}")
 
 
+def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, xp: ModuleType = np):
+    """Per-frame dirty image from already-rotated baselines (device-pure; no host astropy).
+
+    The frame rotation ``C(t)`` has already been folded into ``b_rot``; this is the pure-``xp``
+    core shared by the CPU :func:`image_frame` and the GPU
+    :class:`kremetart.operators.dft_healpix.HealpixDFTOperator`. It flattens ``(time, baseline)``
+    into the row axis and adjoint-DFTs onto the fixed grid.
+
+    Args:
+        vis: ``(n_time, nbl, nchan)`` complex residual visibilities (scalar pol).
+        weights: ``(n_time, nbl, nchan)`` gain-corrected weights.
+        b_rot: ``(n_time, nbl, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
+        pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
+        freqs: ``(nchan,)`` frequencies in Hz.
+        xp: Array module.
+
+    Returns:
+        ``(npix,)`` real dirty image.
+    """
+    b_rot = xp.asarray(b_rot)
+    vis = xp.asarray(vis)
+    weights = xp.asarray(weights)
+    n_time, nbl, _ = b_rot.shape
+    nchan = vis.shape[-1]
+    rows = b_rot.reshape(n_time * nbl, 3)
+    vis_rows = vis.reshape(n_time * nbl, nchan)
+    wgt_rows = weights.reshape(n_time * nbl, nchan)
+    return dirty_map(vis_rows, wgt_rows, rows, pix_vec, freqs, xp=xp)
+
+
 def image_frame(
     vis, weights, times, itrs_baselines, pix_vec, freqs, *, ctime_backend: str = "astropy", xp: ModuleType = np
 ):
     """Per-frame dirty image from unstopped residual visibilities.
 
-    Rotates the ITRS baselines by ``C(t)``, flattens ``(time, baseline)`` into the row axis
-    (the rotated baseline differs per timestamp), and adjoint-DFTs onto the fixed grid.
+    Rotates the ITRS baselines by ``C(t)`` on the host (:func:`equatorial_baselines`) and delegates
+    the DFT to the device-pure :func:`image_frame_prerotated`. Signature and result are unchanged
+    from the original single-function implementation, so existing callers/tests are unaffected.
 
     Args:
         vis: ``(n_time, nbl, nchan)`` complex residual visibilities (scalar pol).
@@ -171,8 +202,4 @@ def image_frame(
         ``(npix,)`` real dirty image.
     """
     b_rot = equatorial_baselines(itrs_baselines, times, backend=ctime_backend, xp=xp)  # (n_time, nbl, 3)
-    n_time, nbl, nchan = vis.shape
-    rows = b_rot.reshape(n_time * nbl, 3)
-    vis_rows = xp.asarray(vis).reshape(n_time * nbl, nchan)
-    wgt_rows = xp.asarray(weights).reshape(n_time * nbl, nchan)
-    return dirty_map(vis_rows, wgt_rows, rows, pix_vec, freqs, xp=xp)
+    return image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, xp=xp)
