@@ -196,6 +196,7 @@ class HealpixZarrReaderOperator(Operator):
     def start(self):
         self.dataset = xr.open_zarr(self.zarr_path)
         self.ntime = self.dataset["time"].size
+        self.out_times = self.dataset["time"].values  # symmetry with XarrayZarrReaderOperator
         self.current_index = 0
 
     def compute(self, op_input, op_output, context):
@@ -217,6 +218,12 @@ class HealpixWriterOperator(Operator):
 
     Mirrors :class:`ResultWriterOperator`'s scaffold-then-region-write pattern, but for a flat
     ``(TIME, npix)`` HEALPix cube rather than a ``(STOKES, FREQ, TIME, Y, X)`` image cube.
+
+    ``out_times`` MUST equal the streamed frames' ``time`` values (the prepared zarr's ``time``
+    coordinate): ``region="auto"`` locates each frame by matching its emitted ``time_out`` against
+    the scaffold's ``TIME`` coordinate, so a mismatch raises ``KeyError`` at write time. The app
+    builds both the scaffold (via this ``out_times``) and the reader's stream from the same zarr, so
+    they agree by construction.
     """
 
     def __init__(
@@ -225,7 +232,7 @@ class HealpixWriterOperator(Operator):
         ntime,
         npix,
         *args,
-        output_dataset: str = None,
+        output_dataset: str | None = None,
         out_times: NDArray = None,
         **kwargs,
     ):
