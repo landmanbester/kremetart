@@ -9,8 +9,6 @@ Renders Mollweide frames with a fixed colour scale and encodes them to mp4 with 
 
 from __future__ import annotations
 
-import contextlib
-import time
 from pathlib import Path
 
 import matplotlib
@@ -21,101 +19,123 @@ import shutil
 import subprocess
 import tempfile
 
-import astropy.units as u
 import healpy as hp
+import holoscan as hs
 import matplotlib.pyplot as plt
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-from astropy.time import Time
+import xarray as xr
+from holoscan.conditions import CountCondition
 
-from kremetart.operators.smoovie_app import image_via_app
-from kremetart.utils import gpu_available, partition_datatree, unix_to_utc
-from kremetart.utils.calibration import correct_file_gains
-from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
-from kremetart.utils.rephasing import itrs_baselines
+from kremetart.operators.dft_healpix import HealpixDFTOperator
+from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
+from kremetart.utils import unix_to_utc
+from kremetart.utils.profiling import print_profile, stage_timer
+from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
+from kremetart.utils.rephasing import common_phase_direction
 from kremetart.utils.satellites import satellite_tracks
 
 
-def common_phase_direction(hdf_paths) -> tuple[float, float]:
-    """Single shared ICRS phase direction: the local zenith RA/Dec at the global mid-time.
+class SmooviePipeline(hs.core.Application):
+    """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr."""
 
-    Reads the first and last timestamps across all files, takes the midpoint, and converts the local
-    zenith (AltAz alt=90 deg) at that time to ICRS. Reusable as the common field center for
-    multi-TART mosaicking: compute once, hand the same value to every TART.
+    def __init__(
+        self,
+        prepared_zarr: Path | str,
+        output_zarr: Path | str,
+        nside: int,
+        *args,
+        nest: bool = True,
+        **kwargs,
+    ):
+        self.prepared_zarr = str(prepared_zarr)
+        self.output_zarr = str(output_zarr)
+        self.nside = nside
+        self.nest = nest
+        super().__init__(*args, **kwargs)
 
-    Args:
-        hdf_paths: ordered iterable of TART HDF paths.
+        ds = xr.open_zarr(self.prepared_zarr)
+        self.ntime = int(ds.time.size)
+        self.out_times = ds.time.values
+        self.freqs = ds.frequency.values
+        self.npix = hp.nside2npix(nside)
 
-    Returns:
-        ``(ra_deg, dec_deg)`` of the local zenith at the global mid-time, in ICRS.
-
-    Raises:
-        ValueError: if ``hdf_paths`` is empty.
-    """
-
-    t_lo = t_hi = None
-    info = None
-    for path in hdf_paths:
-        main = partition_datatree(read_hdf_as_msv4(path)).ds
-        times = np.asarray(main.time.values)
-        lo, hi = float(times.min()), float(times.max())
-        t_lo = lo if t_lo is None else min(t_lo, lo)
-        t_hi = hi if t_hi is None else max(t_hi, hi)
-        # Site info comes from the first file; all inputs are assumed to share the same array site.
-        if info is None:
-            info = main.attrs["observation_info"]
-    if info is None:
-        raise ValueError("no HDF files provided")
-
-    t_mid = 0.5 * (t_lo + t_hi)
-    loc = EarthLocation(
-        lat=info["site_latitude_deg"] * u.deg,
-        lon=info["site_longitude_deg"] * u.deg,
-        height=info["site_altitude_m"] * u.m,
-    )
-    aa = AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=Time(t_mid, format="unix", scale="utc"), location=loc)
-    icrs = SkyCoord(aa).icrs
-    return float(icrs.ra.deg), float(icrs.dec.deg)
+    def compose(self):
+        reader = HealpixZarrReaderOperator(
+            self,
+            CountCondition(self, self.ntime),
+            name="reader",
+            zarr_path=self.prepared_zarr,
+        )
+        imager = HealpixDFTOperator(self, self.nside, self.freqs, name="imager", nest=self.nest)
+        writer = HealpixWriterOperator(
+            self,
+            self.ntime,
+            self.npix,
+            name="writer",
+            output_dataset=self.output_zarr,
+            out_times=self.out_times,
+        )
+        self.add_flow(
+            reader,
+            imager,
+            {("VISIBILITY", "VISIBILITY"), ("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("time", "time")},
+        )
+        self.add_flow(imager, writer, {("cube", "cube"), ("time_out", "time_out")})
 
 
-def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nframes: int | None = None, xp=np):
-    """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
+def image_via_app(
+    hdf_paths,
+    nside: int,
+    *,
+    correct_gains: bool = False,
+    phase_ra_deg: float | None = None,
+    phase_dec_deg: float | None = None,
+    nframes: int | None = None,
+    nest: bool = True,
+):
+    """Image the HDF sequence through the GPU Holoscan app; return ``(maps, stamps)``.
+
+    Runs the host prepare-step into a temp zarr, streams it through :class:`SmooviePipeline`, then
+    loads the ``(TIME, npix)`` output zarr back to host: a list of ``(npix,)`` dirty maps (one per
+    frame, in order) and a list of UTC stamp strings. This is the single imaging seam :func:`smoovie`
+    drives; the wiring tests stub it to exercise the host orchestration without running the GPU.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
-        correct_gains: divide vis/weights by the per-antenna gain product before imaging.
-        nframes: optional cap on the total number of frames produced (profiling/preview aid).
-        xp: array module (numpy by default).
+        correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
+        phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
+        nframes: optional cap on the number of frames imaged.
+        nest: NESTED HEALPix ordering (default True; matches the rest of the pipeline).
 
     Returns:
-        ``(maps, timestamps, pix_vec)`` -- list of ``(npix,)`` real maps (one per sub-integration,
-        across all files, in order), list of UTC strings, and the ``(npix, 3)`` pixel unit vectors.
+        ``(maps, stamps)``.
     """
+    with tempfile.TemporaryDirectory() as td:
+        prepared = Path(td) / "prepared.zarr"
+        output = Path(td) / "dirty.zarr"
+        config = Path(td) / "config.yaml"
+        config.touch()  # an empty Holoscan config is valid
 
-    pix_vec = make_pixel_grid(nside, xp=xp)
-    maps, stamps = [], []
-    for p, path in enumerate(hdf_paths):
-        if nframes is not None and len(maps) >= nframes:
-            break
-        node = partition_datatree(read_hdf_as_msv4(path))
-        main = node.ds
-        times = np.asarray(main.time.values)
-        bl = itrs_baselines(node, xp)  # (nbl, 3)
-        vis = np.asarray(main.VISIBILITY.values)[..., 0]  # (n_time, nbl, nchan), drop single-pol axis
-        wgt = np.asarray(main.WEIGHT.values)[..., 0]
-        freqs = np.asarray(main.frequency.values)
-        if correct_gains:
-            vis, wgt = correct_file_gains(node, vis, wgt, xp=xp)
-        for k in range(times.size):
-            if k % 30 == 0:
-                print(f"Done {k}/{times.size} sub-integrations for path {p} out of {len(hdf_paths)} total paths")
-            if nframes is not None and len(maps) >= nframes:
-                break
-            dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
-            maps.append(np.asarray(dmap))
-            stamps.append(unix_to_utc(times[k]))
-    return maps, stamps, pix_vec
+        prepare_msv4_zarr(
+            hdf_paths,
+            prepared,
+            correct_gains=correct_gains,
+            phase_ra_deg=phase_ra_deg,
+            phase_dec_deg=phase_dec_deg,
+            nframes=nframes,
+        )
+
+        app = SmooviePipeline(prepared, output, nside, nest=nest)
+        app.config(str(config))
+        app.run()
+
+        ds = xr.open_zarr(str(output), chunks=None)  # eager load before the temp dir is removed
+        dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
+        times = np.asarray(ds["TIME"].values)
+
+    maps = list(dirty)
+    stamps = [unix_to_utc(t) for t in times]
+    return maps, stamps
 
 
 def _overlay_tracks(ax, tracks, frame_index):
@@ -182,54 +202,6 @@ def render_frames(
     return paths
 
 
-def encode_movie(png_paths, movie, fps: int):
-    """Encode an ordered PNG sequence into an mp4 with ffmpeg. Returns the movie path."""
-
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
-    movie = Path(movie)
-    pattern = str(Path(png_paths[0]).parent / "frame_%04d.png")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            str(fps),
-            "-i",
-            pattern,
-            "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-pix_fmt",
-            "yuv420p",
-            str(movie),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return movie
-
-
-@contextlib.contextmanager
-def _stage_timer(name, timings):
-    """Record wall-clock seconds for a named stage into ``timings`` (a list of ``(name, seconds)``)."""
-    t0 = time.perf_counter()
-    try:
-        yield
-    finally:
-        timings.append((name, time.perf_counter() - t0))
-
-
-def _print_profile(timings, nframes):
-    """Print a per-stage timing summary table to stdout."""
-    total = sum(dt for _, dt in timings) or 1.0
-    print("\n=== smoovie profile ===")
-    print(f"{'stage':<18}{'seconds':>10}{'%total':>9}{'ms/frame':>11}")
-    for name, dt in timings:
-        per_frame = f"{1000.0 * dt / nframes:.1f}" if nframes else "-"
-        print(f"{name:<18}{dt:>10.3f}{100.0 * dt / total:>8.1f}%{per_frame:>11}")
-    print(f"{'TOTAL':<18}{total:>10.3f}{100.0:>8.1f}%")
-
-
 def smoovie(
     hdf_dir,
     movie,
@@ -258,8 +230,6 @@ def smoovie(
     TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
     (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
     caps the frames imaged/rendered (a profiling/preview aid).
-
-    The imaging backend is auto-detected.
     """
 
     if hdf_dir is None or movie is None:
@@ -271,42 +241,55 @@ def smoovie(
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
     if not hdf_paths:
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
-    timings: list[tuple[str, float]] = []
 
-    print("Getting common phase center")
-    with _stage_timer("phase_direction", timings):
-        if phase_ra_deg is None:
-            phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
+    if phase_ra_deg is None:
+        phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
 
-    print("Making dirty maps")
-    with _stage_timer("imaging", timings):
-        if gpu_available():
-            maps, stamps = image_via_app(
-                hdf_paths,
-                nside,
-                correct_gains=correct_gains,
-                phase_ra_deg=phase_ra_deg,
-                phase_dec_deg=phase_dec_deg,
-                nframes=nframes,
-            )
-        else:
-            maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
+
+    timings = []
+    with stage_timer("imaging", timings):
+        maps, stamps = image_via_app(
+            hdf_paths,
+            nside,
+            correct_gains=correct_gains,
+            phase_ra_deg=phase_ra_deg,
+            phase_dec_deg=phase_dec_deg,
+            nframes=nframes,
+        )
 
     tracks = None
     if overlay_catalog:
         cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
-        print(f"Getting satellite tracks (cache_path={cache_path})")
-        with _stage_timer("catalog", timings):
-            tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
+        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
     with tempfile.TemporaryDirectory() as td:
-        print(f"Rendering frames to {td}")
-        with _stage_timer("render", timings):
-            pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
-        print("Encoding movie")
-        with _stage_timer("encode", timings):
-            encode_movie(pngs, movie, fps)
+        with stage_timer("render", timings):
+            png_paths = render_frames(
+                maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks
+            )
+        with stage_timer("encode", timings):
+            pattern = str(Path(png_paths[0]).parent / "frame_%04d.png")
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-framerate",
+                    str(fps),
+                    "-i",
+                    pattern,
+                    "-vf",
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(movie),
+                ],
+                check=True,
+                capture_output=True,
+            )
 
     if profile:
-        _print_profile(timings, len(maps))
+        print_profile(timings, nframes=len(maps))
+
     return movie

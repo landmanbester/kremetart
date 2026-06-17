@@ -1,7 +1,5 @@
 """L1: kremetart antenna positions match an independent PROJ truth; tart2ms does not."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -16,20 +14,14 @@ from tests.accuracy_helpers import (
     enu_to_ecef_truth,
 )
 
-_DATA = Path(__file__).parent / "data"
-_HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
-_MS = _DATA / "vis_2026-06-09_08_11_43.476804_nocal.ms"
-
 
 @pytest.fixture(scope="module")
-def positions():
-    if not _HDF.exists() or not _MS.exists():
-        pytest.skip("reference HDF/MS not present")
-    ours_part = partition_datatree(read_hdf_as_msv4(_HDF))
+def positions(ref_hdf, ref_ms_nocal):
+    ours_part = partition_datatree(read_hdf_as_msv4(ref_hdf))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     truth = enu_to_ecef_truth(enu, lat, lon, alt)
     ours = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))
-    ms_part = partition_datatree(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))
+    ms_part = partition_datatree(xr.open_datatree(str(ref_ms_nocal), engine="xarray-ms:msv2"))
     tart2ms = antenna_ecef(ms_part["antenna_xds"].to_dataset(inherit=False))
     a1, a2 = baseline_index_arrays(ours_part)
     return dict(truth=truth, ours=ours, tart2ms=tart2ms, a1=a1, a2=a2)

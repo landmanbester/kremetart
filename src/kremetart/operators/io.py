@@ -267,5 +267,7 @@ class HealpixWriterOperator(Operator):
         )
         dso.to_zarr(self.output_dataset, region="auto")
 
+        # also write the png stamp for this frame, if requested
+
     def stop(self):
         pass

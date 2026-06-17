@@ -13,7 +13,6 @@ from tart_tools import api_handler
 from kremetart.utils import partition_datatree
 from kremetart.utils.calibration import correct_file_gains
 from kremetart.utils.healpix_dft import equatorial_baselines
-from kremetart.utils.rephasing import itrs_baselines
 
 
 def read_hdf_as_xr(path, filter_elevation=45):
@@ -464,7 +463,7 @@ def prepare_msv4_zarr(
     """Write the HDF sequence to one imaging-ready zarr; return the output path.
 
     Args:
-        hdf_paths: ordered iterable of TART HDF paths (same order as ``frame_dirty_maps``).
+        hdf_paths: ordered iterable of TART HDF paths (frames are emitted in this order).
         out_zarr: output zarr path (overwritten if present).
         correct_gains: divide vis/weights by the per-antenna gain product before writing.
         phase_ra_deg: common phase-direction RA (deg, ICRS); stored in attrs (``NaN`` if unset).
@@ -492,7 +491,13 @@ def prepare_msv4_zarr(
         node = partition_datatree(read_hdf_as_msv4(path))
         main = node.ds
         times = np.asarray(main.time.values)
-        bl = np.asarray(itrs_baselines(node, np))  # (nbl, 3) host
+        antenna = node["antenna_xds"].to_dataset(inherit=False)
+        pos = antenna.ANTENNA_POSITION.values  # (n_ant, 3) ITRS
+        names = list(antenna.antenna_name.values)
+        index = {name: i for i, name in enumerate(names)}
+        a1 = np.array([index[n] for n in node.ds.baseline_antenna1_name.values])
+        a2 = np.array([index[n] for n in node.ds.baseline_antenna2_name.values])
+        bl = np.asarray(np.asarray(pos[a1] - pos[a2]))  # (nbl, 3) host
         vis = np.asarray(main.VISIBILITY.values)[..., 0]  # (n_time, nbl, nchan)
         wgt = np.asarray(main.WEIGHT.values)[..., 0]
         if freqs is None:

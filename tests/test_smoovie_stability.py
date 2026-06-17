@@ -1,9 +1,6 @@
 """A fixed celestial source lands in the same HEALPix pixel across all frames (sidereally-fixed grid)."""
 
-from pathlib import Path
-
 import numpy as np
-import pytest
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
@@ -16,16 +13,13 @@ from tests.accuracy_helpers import (
     sources_spanning_zenith,
 )
 
-_DATA = Path(__file__).parent / "data"
 NSIDE = 64
 
 
-def test_steady_source_holds_one_pixel_across_frames():
+def test_steady_source_holds_one_pixel_across_frames(hdf_paths):
     import healpy as hp
 
-    paths = sorted(_DATA.glob("*.hdf"))
-    if not paths:
-        pytest.skip("no test HDFs present")
+    paths = hdf_paths
     pix = make_pixel_grid(NSIDE, xp=np)
 
     # A fixed celestial source ~60 deg elevation at the first frame's mid time.

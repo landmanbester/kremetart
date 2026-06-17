@@ -1,8 +1,6 @@
 """L2: imaging PROJ-truth visibilities with our geometry recovers the source more accurately
 than tart2ms's geometry (sub-pixel, off-grid sources spanning zenith angle)."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -24,9 +22,6 @@ from tests.accuracy_helpers import (
     sources_spanning_zenith,
 )
 
-_DATA = Path(__file__).parent / "data"
-_HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
-_MS = _DATA / "vis_2026-06-09_08_11_43.476804_nocal.ms"
 NSIDE = 128
 FREQ = np.array([1575420000.0])
 FLUX = 10.0
@@ -34,16 +29,16 @@ ELS_DEG = np.array([15.0, 35.0, 55.0, 75.0])  # horizon -> near zenith
 
 
 @pytest.fixture(scope="module")
-def setup():
-    if not _HDF.exists() or not _MS.exists():
-        pytest.skip("reference HDF/MS not present")
-    ours_part = partition_datatree(read_hdf_as_msv4(_HDF))
+def setup(ref_hdf, ref_ms_nocal):
+    ours_part = partition_datatree(read_hdf_as_msv4(ref_hdf))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     a1, a2 = baseline_index_arrays(ours_part)
     truth_pos = enu_to_ecef_truth(enu, lat, lon, alt)
     ours_pos = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))
     tart_pos = antenna_ecef(
-        partition_datatree(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(inherit=False)
+        partition_datatree(xr.open_datatree(str(ref_ms_nocal), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(
+            inherit=False
+        )
     )
     times = np.asarray(ours_part.ds.time.values)
     tmid = times[times.size // 2 : times.size // 2 + 1]  # single representative integration

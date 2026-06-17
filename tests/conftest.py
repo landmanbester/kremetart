@@ -103,3 +103,37 @@ def catalog_elevation(catalog_cache: str) -> float:
     import xarray as xr
 
     return float(xr.open_zarr(catalog_cache).attrs["elevation_deg"])
+
+
+# The single reference snapshot that ships with matching tart2ms Measurement Sets, used by the
+# accuracy / rephasing / spec-compliance oracles. Centralised here (basename in one place) so a
+# change of reference dataset touches only this file. Both MS flavours exist: the calibrated ``.ms``
+# and the uncalibrated ``_nocal.ms`` (raw amplitudes, for the rephasing/geometry comparisons).
+_REF_STEM = "vis_2026-06-09_08_11_43.476804"
+
+
+@pytest.fixture(scope="session")
+def ref_hdf(data_dir: Path) -> Path:
+    """The reference TART HDF snapshot (the one with matching Measurement Sets); skips if absent."""
+    hdf = data_dir / f"{_REF_STEM}.hdf"
+    if not hdf.exists():
+        pytest.skip(f"reference HDF not present: {hdf}")
+    return hdf
+
+
+@pytest.fixture(scope="session")
+def ref_ms(data_dir: Path) -> Path:
+    """The calibrated tart2ms Measurement Set for the reference snapshot; skips if absent."""
+    ms = data_dir / f"{_REF_STEM}.ms"
+    if not ms.exists():
+        pytest.skip(f"reference MS not present: {ms}")
+    return ms
+
+
+@pytest.fixture(scope="session")
+def ref_ms_nocal(data_dir: Path) -> Path:
+    """The uncalibrated (raw-amplitude) tart2ms Measurement Set for the reference snapshot."""
+    ms = data_dir / f"{_REF_STEM}_nocal.ms"
+    if not ms.exists():
+        pytest.skip(f"reference nocal MS not present: {ms}")
+    return ms
