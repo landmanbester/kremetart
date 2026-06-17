@@ -214,10 +214,11 @@ class HealpixZarrReaderOperator(Operator):
 
 
 class HealpixWriterOperator(Operator):
-    """Write per-frame HEALPix dirty maps to a ``(TIME, PIX)`` zarr (dask scaffold + region="auto").
+    """Write per-frame HEALPix maps (``dirty``, ``filtered``, ``znorm``) to a ``(TIME, PIX)`` zarr
+    (dask scaffold + region="auto").
 
-    Mirrors :class:`ResultWriterOperator`'s scaffold-then-region-write pattern, but for a flat
-    ``(TIME, npix)`` HEALPix cube rather than a ``(STOKES, FREQ, TIME, Y, X)`` image cube.
+    Mirrors :class:`ResultWriterOperator`'s scaffold-then-region-write pattern, but for three flat
+    ``(TIME, npix)`` HEALPix variables rather than a ``(STOKES, FREQ, TIME, Y, X)`` image cube.
 
     ``out_times`` MUST equal the streamed frames' ``time`` values (the prepared zarr's ``time``
     coordinate): ``region="auto"`` locates each frame by matching its emitted ``time_out`` against
