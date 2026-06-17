@@ -10,8 +10,10 @@ writer. Movie rendering/encoding happens on the host *after* ``app.run()`` (see 
 :func:`kremetart.core.smoovie._gpu_imaging_available` is true.
 """
 
+from collections.abc import Iterable
 from pathlib import Path
 
+import healpy as hp
 import holoscan as hs
 import numpy as np
 import xarray as xr
@@ -24,14 +26,14 @@ from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOpera
 class SmooviePipeline(hs.core.Application):
     """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr."""
 
-    def __init__(self, prepared_zarr, output_zarr, nside, *args, nest=True, **kwargs):
+    def __init__(
+        self, prepared_zarr: Path | str, output_zarr: Path | str, nside: int, *args, nest: bool = True, **kwargs
+    ):
         self.prepared_zarr = str(prepared_zarr)
         self.output_zarr = str(output_zarr)
         self.nside = nside
         self.nest = nest
         super().__init__(*args, **kwargs)
-
-        import healpy as hp
 
         ds = xr.open_zarr(self.prepared_zarr)
         self.ntime = int(ds.time.size)
@@ -64,14 +66,14 @@ class SmooviePipeline(hs.core.Application):
 
 
 def image_via_app(
-    hdf_paths,
-    nside,
+    hdf_paths: Iterable[Path | str],
+    nside: int,
     *,
-    correct_gains=False,
-    phase_ra_deg=None,
-    phase_dec_deg=None,
-    nframes=None,
-    nest=True,
+    correct_gains: bool = False,
+    phase_ra_deg: float | None = None,
+    phase_dec_deg: float | None = None,
+    nframes: int | None = None,
+    nest: bool = True,
 ):
     """Image the HDF sequence through the GPU app; return ``(maps, stamps)``.
 
@@ -115,10 +117,10 @@ def image_via_app(
         app.config(str(config))
         app.run()
 
-        ds = xr.open_zarr(str(output))
+        ds = xr.open_zarr(str(output), chunks=None)  # eager load before the temp dir is removed
         dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
         times = np.asarray(ds["TIME"].values)
 
-    maps = [dirty[i] for i in range(dirty.shape[0])]
+    maps = list(dirty)
     stamps = [_utc(t) for t in times]
     return maps, stamps

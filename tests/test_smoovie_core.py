@@ -395,3 +395,19 @@ def test_smoovie_default_catalog_cache_path(tmp_path, monkeypatch):
     sm.smoovie(hdf_dir=_DATA, movie=movie, nside=1, overlay_catalog=True, nframes=3, use_gpu=False)
     assert captured["cache_path"] == str(movie) + ".catalog.zarr"
     assert captured["nframes"] == 3
+
+
+def test_gpu_imaging_available_returns_false_without_cupy(monkeypatch):
+    import builtins
+
+    from kremetart.core.smoovie import _gpu_imaging_available
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "cupy":
+            raise ImportError("simulated: cupy unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert _gpu_imaging_available() is False
