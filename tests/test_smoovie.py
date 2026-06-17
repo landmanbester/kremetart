@@ -63,8 +63,10 @@ def sm_stub(sm, monkeypatch):
 def test_gpu_operators_import():
     from kremetart.operators.dft_healpix import HealpixDFTOperator
     from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
+    from kremetart.operators.iwp_kalman import IWPKalmanOperator
 
     assert HealpixDFTOperator and HealpixZarrReaderOperator and HealpixWriterOperator
+    assert IWPKalmanOperator
 
 
 def test_image_via_app_end_to_end(hdf_paths):
