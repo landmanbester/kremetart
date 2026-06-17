@@ -17,6 +17,9 @@ import datetime
 
 import numpy as np
 
+from kremetart.utils import partition_datatree
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+
 
 def _tart_api_fetch(lon, lat, datestr, elevation_deg):
     """Return the catalogue source list for a site at a UTC datestr (network).
@@ -56,13 +59,11 @@ def _frame_times_and_site(hdf_paths):
     Raises:
         ValueError: if ``hdf_paths`` is empty.
     """
-    from kremetart.core.smoovie import _partition
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
     times_unix: list[float] = []
     info = None
     for path in hdf_paths:
-        main = _partition(read_hdf_as_msv4(path)).ds
+        main = partition_datatree(read_hdf_as_msv4(path)).ds
         times_unix.extend(float(t) for t in np.asarray(main.time.values))
         if info is None:
             info = main.attrs["observation_info"]

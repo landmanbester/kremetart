@@ -21,11 +21,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import xarray as xr
 
-xr = pytest.importorskip("xarray")
-pytest.importorskip("xarray_ms")  # registers the "xarray-ms:msv2" engine
-
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4  # noqa: E402  (after importorskip)
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 _DATA = Path(__file__).parent / "data"
 _HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"

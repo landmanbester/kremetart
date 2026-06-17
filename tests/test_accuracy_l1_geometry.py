@@ -4,13 +4,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import xarray as xr
 
-pytest.importorskip("pyproj")
-xr = pytest.importorskip("xarray")
-pytest.importorskip("xarray_ms")  # registers xarray-ms:msv2
-
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4  # noqa: E402  (after importorskip)
-from tests.accuracy_helpers import (  # noqa: E402
+from kremetart.utils import partition_datatree
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from tests.accuracy_helpers import (
     antenna_ecef,
     antenna_enu_and_site,
     baseline_index_arrays,
@@ -23,19 +21,15 @@ _HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
 _MS = _DATA / "vis_2026-06-09_08_11_43.476804_nocal.ms"
 
 
-def _partition(dt):
-    return dt[list(dt.children)[0]]
-
-
 @pytest.fixture(scope="module")
 def positions():
     if not _HDF.exists() or not _MS.exists():
         pytest.skip("reference HDF/MS not present")
-    ours_part = _partition(read_hdf_as_msv4(_HDF))
+    ours_part = partition_datatree(read_hdf_as_msv4(_HDF))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     truth = enu_to_ecef_truth(enu, lat, lon, alt)
     ours = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))
-    ms_part = _partition(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))
+    ms_part = partition_datatree(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))
     tart2ms = antenna_ecef(ms_part["antenna_xds"].to_dataset(inherit=False))
     a1, a2 = baseline_index_arrays(ours_part)
     return dict(truth=truth, ours=ours, tart2ms=tart2ms, a1=a1, a2=a2)

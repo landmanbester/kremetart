@@ -5,16 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import xarray as xr
 
-pytest.importorskip("pyproj")
-xr = pytest.importorskip("xarray")
-pytest.importorskip("xarray_ms")
-pytest.importorskip("astropy")
-pytest.importorskip("healpy")
-
-from kremetart.utils.healpix_dft import equatorial_baselines, image_frame, make_pixel_grid  # noqa: E402
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4  # noqa: E402
-from tests.accuracy_helpers import (  # noqa: E402
+from kremetart.utils import partition_datatree
+from kremetart.utils.healpix_dft import equatorial_baselines, image_frame, make_pixel_grid
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from tests.accuracy_helpers import (
     analytic_offset,
     angular_offset,
     antenna_ecef,
@@ -37,21 +33,17 @@ FLUX = 10.0
 ELS_DEG = np.array([15.0, 35.0, 55.0, 75.0])  # horizon -> near zenith
 
 
-def _partition(dt):
-    return dt[list(dt.children)[0]]
-
-
 @pytest.fixture(scope="module")
 def setup():
     if not _HDF.exists() or not _MS.exists():
         pytest.skip("reference HDF/MS not present")
-    ours_part = _partition(read_hdf_as_msv4(_HDF))
+    ours_part = partition_datatree(read_hdf_as_msv4(_HDF))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     a1, a2 = baseline_index_arrays(ours_part)
     truth_pos = enu_to_ecef_truth(enu, lat, lon, alt)
     ours_pos = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))
     tart_pos = antenna_ecef(
-        _partition(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(inherit=False)
+        partition_datatree(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(inherit=False)
     )
     times = np.asarray(ours_part.ds.time.values)
     tmid = times[times.size // 2 : times.size // 2 + 1]  # single representative integration

@@ -1,11 +1,8 @@
 """Unit tests for the accuracy-verification helpers."""
 
 import numpy as np
-import pytest
 
-pyproj = pytest.importorskip("pyproj")
-
-from tests.accuracy_helpers import (  # noqa: E402  (after importorskip)
+from tests.accuracy_helpers import (
     analytic_offset,
     angular_offset,
     baselines_from_positions,

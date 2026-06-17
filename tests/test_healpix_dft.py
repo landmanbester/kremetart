@@ -24,7 +24,8 @@ def test_make_pixel_grid_shape_and_unit_norm():
 
 
 def test_make_pixel_grid_nested_matches_healpy():
-    hp = pytest.importorskip("healpy")
+    import healpy as hp
+
     nside = 4
     pix = make_pixel_grid(nside, xp=np)  # nest=True default
     expected = np.stack(hp.pix2vec(nside, np.arange(hp.nside2npix(nside)), nest=True), axis=1)
@@ -84,7 +85,6 @@ def test_dirty_map_recovers_point_source():
 
 def test_equatorial_baselines_matches_itrs_unit_vectors():
     """b_rot . s_icrs equals b_itrs . s_itrs(t) from the tested rephasing machinery."""
-    pytest.importorskip("astropy")
     from kremetart.utils.rephasing import _itrs_unit_vectors
 
     rng = np.random.default_rng(3)
@@ -111,7 +111,6 @@ def test_equatorial_baselines_native_not_implemented():
 
 def test_image_frame_recovers_source_through_ctime():
     """End-to-end: model a source per timestamp with C(t), image it back to the right pixel."""
-    pytest.importorskip("astropy")
     rng = np.random.default_rng(5)
     nside = 16
     pix = make_pixel_grid(nside, xp=np)
@@ -136,7 +135,6 @@ def test_image_frame_recovers_source_through_ctime():
 
 def test_image_frame_prerotated_matches_image_frame():
     """The device-pure core equals the full image_frame (which now wraps it)."""
-    pytest.importorskip("astropy")
     from kremetart.utils.healpix_dft import equatorial_baselines, image_frame
 
     rng = np.random.default_rng(7)

@@ -7,7 +7,7 @@ writer. Movie rendering/encoding happens on the host *after* ``app.run()`` (see 
 
 ``holoscan`` and ``cupy`` import at module top, so importing this module requires a GPU. The CPU
 ``smoovie`` path in :mod:`kremetart.core.smoovie` never imports it -- it is imported lazily, only when
-:func:`kremetart.core.smoovie._gpu_imaging_available` is true.
+:func:`kremetart.utils.gpu_available` is true.
 """
 
 from collections.abc import Iterable
@@ -21,6 +21,7 @@ from holoscan.conditions import CountCondition
 
 from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
+from kremetart.utils import unix_to_utc
 
 
 class SmooviePipeline(hs.core.Application):
@@ -95,8 +96,7 @@ def image_via_app(
     """
     import tempfile
 
-    from kremetart.core.smoovie import _utc
-    from kremetart.core.smoovie_prepare import prepare_msv4_zarr
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
     with tempfile.TemporaryDirectory() as td:
         prepared = Path(td) / "prepared.zarr"
@@ -122,5 +122,5 @@ def image_via_app(
         times = np.asarray(ds["TIME"].values)
 
     maps = list(dirty)
-    stamps = [_utc(t) for t in times]
+    stamps = [unix_to_utc(t) for t in times]
     return maps, stamps

@@ -1,51 +1,39 @@
-"""Render a TART HDF sequence into a HEALPix all-sky movie.
+"""
+Render a TART HDF sequence into a HEALPix all-sky movie.
+Starts by concatenating the HDFs into a single MSv4 zarr, then streams it through the GPU Holoscan app.
+The core imaging algorithm is implemented as a GPU Holoscan operator which should completely bypass the CPU.
+Every sub-integration is imaged in a fixed equatorial (ICRS) HEALPix grid with a common phase center.
+Renders Mollweide frames with a fixed colour scale and encodes them to mp4 with ffmpeg.
 
-Images every sub-integration across the input HDFs onto the fixed equatorial (ICRS) HEALPix grid
-(full sphere), all centered on a single common phase direction (the local zenith RA/Dec at the
-global mid-time, reusable as the shared field center for multi-TART mosaicking). Renders Mollweide
-frames with a fixed colour scale and encodes them to mp4 with ffmpeg. See
-docs/superpowers/specs/2026-06-16-smoovie-common-frame-design.md (amending the original
-docs/superpowers/specs/2026-06-15-smoovie-design.md).
 """
 
 from __future__ import annotations
 
 import contextlib
-import datetime
 import time
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 
+matplotlib.use("Agg")
+import shutil
+import subprocess
+import tempfile
 
-def _partition(dt):
-    return dt[list(dt.children)[0]]
+import astropy.units as u
+import healpy as hp
+import matplotlib.pyplot as plt
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.time import Time
 
-
-def _utc(unix_seconds) -> str:
-    dt = datetime.datetime.fromtimestamp(float(unix_seconds), tz=datetime.timezone.utc)
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def _gpu_imaging_available() -> bool:
-    """True if a CUDA device plus the GPU imaging stack (cupy/holoscan/healpy) is importable.
-
-    Drives ``smoovie``'s auto-routing: when true the imaging runs through the Holoscan GPU app
-    (:func:`kremetart.core.smoovie_app.image_via_app`); otherwise it falls back to the CPU
-    :func:`frame_dirty_maps`. Any import error or absent device -> CPU path, so CPU-only CI and
-    machines without a GPU keep working.
-    """
-    try:
-        import cupy
-
-        if cupy.cuda.runtime.getDeviceCount() < 1:
-            return False
-        import healpy  # noqa: F401
-        import holoscan  # noqa: F401
-
-        return True
-    except Exception:
-        return False
+from kremetart.operators.smoovie_app import image_via_app
+from kremetart.utils import gpu_available, partition_datatree, unix_to_utc
+from kremetart.utils.calibration import correct_file_gains
+from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from kremetart.utils.rephasing import itrs_baselines
+from kremetart.utils.satellites import satellite_tracks
 
 
 def common_phase_direction(hdf_paths) -> tuple[float, float]:
@@ -64,16 +52,11 @@ def common_phase_direction(hdf_paths) -> tuple[float, float]:
     Raises:
         ValueError: if ``hdf_paths`` is empty.
     """
-    import astropy.units as u
-    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-    from astropy.time import Time
-
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
     t_lo = t_hi = None
     info = None
     for path in hdf_paths:
-        main = _partition(read_hdf_as_msv4(path)).ds
+        main = partition_datatree(read_hdf_as_msv4(path)).ds
         times = np.asarray(main.time.values)
         lo, hi = float(times.min()), float(times.max())
         t_lo = lo if t_lo is None else min(t_lo, lo)
@@ -95,23 +78,6 @@ def common_phase_direction(hdf_paths) -> tuple[float, float]:
     return float(icrs.ra.deg), float(icrs.dec.deg)
 
 
-def _correct_file_gains(node, vis, wgt, *, xp=np):
-    """Divide a file's vis/weight by the per-antenna gain product (``gain_xds.GAIN``).
-
-    Maps each baseline to its two antenna gains the same way :func:`itrs_baselines` maps
-    antennas, then delegates to :func:`kremetart.utils.gains.apply_inverse_gains`. The gain
-    snapshot is per-file (time-independent), so this runs once before the sub-integration loop.
-    """
-    from kremetart.utils.gains import apply_inverse_gains
-
-    antenna = node["antenna_xds"].to_dataset(inherit=False)
-    index = {name: i for i, name in enumerate(antenna.antenna_name.values)}
-    a1 = np.array([index[n] for n in node.ds.baseline_antenna1_name.values])
-    a2 = np.array([index[n] for n in node.ds.baseline_antenna2_name.values])
-    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
-    return apply_inverse_gains(vis, wgt, gains, a1, a2, xp=xp)
-
-
 def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nframes: int | None = None, xp=np):
     """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
 
@@ -126,16 +92,13 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nfra
         ``(maps, timestamps, pix_vec)`` -- list of ``(npix,)`` real maps (one per sub-integration,
         across all files, in order), list of UTC strings, and the ``(npix, 3)`` pixel unit vectors.
     """
-    from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
-    from kremetart.utils.rephasing import itrs_baselines
 
     pix_vec = make_pixel_grid(nside, xp=xp)
     maps, stamps = [], []
     for p, path in enumerate(hdf_paths):
         if nframes is not None and len(maps) >= nframes:
             break
-        node = _partition(read_hdf_as_msv4(path))
+        node = partition_datatree(read_hdf_as_msv4(path))
         main = node.ds
         times = np.asarray(main.time.values)
         bl = itrs_baselines(node, xp)  # (nbl, 3)
@@ -143,14 +106,15 @@ def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nfra
         wgt = np.asarray(main.WEIGHT.values)[..., 0]
         freqs = np.asarray(main.frequency.values)
         if correct_gains:
-            vis, wgt = _correct_file_gains(node, vis, wgt, xp=xp)
+            vis, wgt = correct_file_gains(node, vis, wgt, xp=xp)
         for k in range(times.size):
-            print(f"Done {k}/{times.size} sub-integrations for path {p} out of {len(hdf_paths)} total paths")
+            if k % 30 == 0:
+                print(f"Done {k}/{times.size} sub-integrations for path {p} out of {len(hdf_paths)} total paths")
             if nframes is not None and len(maps) >= nframes:
                 break
             dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
             maps.append(np.asarray(dmap))
-            stamps.append(_utc(times[k]))
+            stamps.append(unix_to_utc(times[k]))
     return maps, stamps, pix_vec
 
 
@@ -201,11 +165,6 @@ def render_frames(
     patch sits stably at the projection center across the movie. ``tracks`` (if given) overlays
     per-satellite ICRS trajectories (trailing line + current marker + name label) on each frame.
     """
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import healpy as hp
-    import matplotlib.pyplot as plt
 
     outdir = Path(outdir)
     stacked = np.concatenate([np.asarray(m) for m in maps])
@@ -225,8 +184,6 @@ def render_frames(
 
 def encode_movie(png_paths, movie, fps: int):
     """Encode an ordered PNG sequence into an mp4 with ffmpeg. Returns the movie path."""
-    import shutil
-    import subprocess
 
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
@@ -287,7 +244,6 @@ def smoovie(
     catalog_cache: str | None = None,
     profile: bool = False,
     nframes: int | None = None,
-    use_gpu: bool | None = None,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
 
@@ -303,11 +259,8 @@ def smoovie(
     (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
     caps the frames imaged/rendered (a profiling/preview aid).
 
-    ``use_gpu`` selects the imaging backend: ``None`` (default) auto-detects a CUDA device + the
-    Holoscan stack and uses the GPU app when present, else the CPU ``frame_dirty_maps``; pass
-    ``True``/``False`` to force one. It is a core-only knob (not a CLI flag).
+    The imaging backend is auto-detected.
     """
-    import tempfile
 
     if hdf_dir is None or movie is None:
         raise ValueError("hdf_dir and movie are required")
@@ -327,10 +280,7 @@ def smoovie(
 
     print("Making dirty maps")
     with _stage_timer("imaging", timings):
-        use = _gpu_imaging_available() if use_gpu is None else use_gpu
-        if use:
-            from kremetart.core.smoovie_app import image_via_app
-
+        if gpu_available():
             maps, stamps = image_via_app(
                 hdf_paths,
                 nside,
@@ -344,8 +294,6 @@ def smoovie(
 
     tracks = None
     if overlay_catalog:
-        from kremetart.utils.satellites import satellite_tracks
-
         cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
         print(f"Getting satellite tracks (cache_path={cache_path})")
         with _stage_timer("catalog", timings):

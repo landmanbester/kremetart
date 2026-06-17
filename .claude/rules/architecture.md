@@ -40,6 +40,38 @@ kremetart/
 | `core/` | The actual implementation. Type-hinted function with the same name as the CLI wrapper, but **no Typer / hip-cargo decorators**. Free to import anything. | Typer. `@stimela_cab`. UI concerns. `typer.Exit(...)`. |
 | `cabs/` | Generated `<command>.yml` files. Committed to source control. Loaded by Stimela. | Anything you wrote by hand. Drift from `cli/*.py`. |
 
+### `core/` is one module per command (enforced)
+
+`cli/`, `core/` and `cabs/` are in **strict 1:1:1 correspondence**: for every command `<name>`
+there is exactly `cli/<name>.py`, `core/<name>.py`, and `cabs/<name>.yml`, all sharing the
+command's name. This correspondence *is* the round trip — do not weaken it.
+
+- **`core/` holds commands only.** A `core/<name>.py` that has no `cli/<name>.py` mirror is a bug.
+  Shared / host helper logic goes in `utils/`; Holoscan operators **and the apps that wire them**
+  go in `operators/`. A `core/<cmd>.py` imports from `utils/` and `operators/` (heavy deps at module
+  scope are fine in all three) — it never grows sibling `core/<cmd>_*.py` helper or app modules.
+  (`core/stream_msv4.py` holds a Holoscan app *because `stream_msv4` is itself a command*, not
+  because apps live in `core/`.)
+- **`core.<cmd>` must mirror `cli.<cmd>`'s signature.** Its parameters equal the cli wrapper's
+  parameters minus the `StimelaMeta(skip=True)` flags (`backend`, `always_pull_images`). **Never add
+  a parameter to `core/<cmd>.py` that is not on the cli wrapper.** A core-only parameter is dead
+  surface — unreachable from the CLI or a Stimela cab, only from a direct Python call — and almost
+  always means runtime/environment branching (e.g. GPU-vs-CPU imaging) that should be **auto-detected
+  internally**, with tests forcing a path by monkeypatching the detector, not by a new argument. If a
+  knob genuinely needs to be user-facing, add it to `cli/<cmd>.py` (and let the cab regenerate),
+  never to `core/` alone.
+- **Dependencies flow one way: `cli/` → `core/` → {`utils/`, `operators/`}.** `utils/` and
+  `operators/` must never import from `core/`. A helper defined in a `core/<cmd>.py` and imported by
+  another module — another command, or anything in `utils/` / `operators/` — is misplaced: promote it
+  to `utils/` under a public (non-underscore) name (see `python-standards.md` §6). `core/<cmd>.py`
+  keeps only helpers private to that one command, and (per `python-standards.md` §2) imports its
+  dependencies at module top.
+
+`tests/test_structure.py` enforces the directory bijection and the signature mirror;
+`tests/test_roundtrip.py` enforces the `cli` ↔ `cab` half. If you are extending an existing command
+with substantial new machinery, that machinery lands in `utils/` / `operators/`, and `core/<cmd>.py`
+orchestrates it.
+
 ### Adding a new command
 
 1. Create `src/kremetart/cli/<name>.py` with a `@stimela_cab`-decorated

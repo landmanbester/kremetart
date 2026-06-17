@@ -8,16 +8,37 @@ Read this when editing or creating any `**/*.py` files.
 - **Type hints on every function signature.**
 - Use `from typing import Annotated` for Typer parameter annotations.
 
-## 2. Lazy Imports in `cli/`
+## 2. Import Placement
 
-Heavy imports live in `core/` only. CLI wrappers under `cli/` must import from
-`core/` **inside the function body**, never at module scope. This keeps the
-lightweight install fast and lets the container-fallback pattern work (see
-`architecture.md` §3).
+**Imports go at the top of the module** (PEP 8 order: stdlib, third-party,
+first-party). This holds for `core/`, `utils/` and `operators/`. Do **not** scatter
+`import` statements inside function bodies out of habit — top-level imports make a
+module's dependencies legible at a glance, and the container fallback already tolerates
+heavy top-level imports in `core/` (the `cli` wrapper imports `core` inside a
+`try/except ImportError`). Ordinary stdlib and heavy third-party deps (`numpy`,
+`astropy`, `healpy`, `xarray`, `tempfile`, …) belong at the **top** of `core/`/`utils/`
+modules — there is no reason to defer them.
 
-- **fsspec backends stay lazy.** Never import `s3fs`, `gcsfs`, or `adlfs`
-  directly. fsspec loads the matching backend on demand when a remote UPath is
-  first accessed.
+Put an import inside a function body **only** for one of these specific reasons, and add
+a one-line comment saying which:
+
+1. **`cli/` → `core/` (required).** A CLI wrapper imports its core implementation
+   *inside the function body*, never at module scope. This is the hinge of the
+   container-fallback pattern (`architecture.md` §3) and keeps the lightweight install
+   importable without the heavy deps. CLI wrappers must stay free of heavy/domain
+   imports at module scope entirely.
+2. **GPU-only deps in a module that must stay importable without a GPU.** `cupy` and
+   `holoscan` are imported at module top *only* in `operators/` and other inherently
+   GPU-only modules. A `core/`/`utils/` module that has a non-GPU path (e.g.
+   `core/smoovie.py`, which falls back to CPU imaging) keeps them lazy — import the
+   GPU module inside the GPU branch — so the CPU path stays importable on a machine
+   without `cupy`/`holoscan`. (A core command that is *inherently* GPU-only, like
+   `core/stream_msv4.py`, may import them at top.)
+3. **fsspec backends stay lazy.** Never import `s3fs`, `gcsfs`, or `adlfs` directly;
+   fsspec loads the matching backend on demand when a remote UPath is first accessed.
+4. **Breaking a genuine import cycle.** Prefer to remove the cycle by moving the shared
+   code into `utils/` (see `architecture.md` §1) over papering over it with a
+   function-body import.
 
 ## 3. Typer Option / Argument Syntax (CRITICAL)
 
@@ -50,3 +71,21 @@ lightweight install fast and lets the container-fallback pattern work (see
   `typer.Exit(code=1)` for CLI errors in `cli/` (never in `core/`).
 - Use Google-style docstrings (document Args, Returns, Raises). Keep them
   concise. Add short inline comments only when intent isn't obvious.
+
+## 6. Private vs. Shared Names
+
+A **leading underscore means module-private**: `_helper` may only be used inside the
+module that defines it. If a function (or constant/class) is imported by *any* other
+module, it is part of an API and must **not** carry a leading underscore.
+
+- A helper used across modules is **shared code**: give it a public (non-underscore)
+  name and move it to `utils/` (per `architecture.md` §1) — not a `_name` reached out of
+  a `core/` command. Example: `_partition` / `_utc` defined in `core/smoovie.py` and
+  imported from `utils/satellites.py` is wrong twice over — wrong layer (a `core` command
+  acting as a utility provider; see `architecture.md` §1) *and* wrong visibility (a
+  "private" name used across modules).
+- Reserve `_name` for helpers that genuinely stay within their defining module.
+
+So `utils/` and `operators/` expose public, non-underscore functions; `core/<cmd>.py`
+keeps its `_name` helpers truly local, or promotes them to `utils/` when a second module
+needs them.
