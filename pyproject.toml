@@ -39,6 +39,11 @@ full = [
     "zarr>=2.18.3",
     "holoscan-cu13>=4.3.0",
     "dask[array]>=2024.1.0",
+    # CUDA-13 cuBLAS for cupy-cuda13x's GPU kernels (einsum/matmul in the HEALPix DFT).
+    # cupy-cuda13x finds it via cuda-pathfinder but does not pull it, and the system CUDA-13
+    # toolkit here ships no cuBLAS. NB: the real wheel is unsuffixed "nvidia-cublas"; the
+    # "nvidia-cublas-cu13" name is only a 0.0.1 redirect stub.
+    "nvidia-cublas>=13.0,<14",
     "tart-tools>=1.4.5 ; python_version >= '3.11'",
     "netcdf4>=1.7.4 ; python_version >= '3.11'",
     "tart[all]>=1.4.5  ; python_version >= '3.11'",
