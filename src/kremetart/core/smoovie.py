@@ -27,6 +27,27 @@ def _utc(unix_seconds) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _gpu_imaging_available() -> bool:
+    """True if a CUDA device plus the GPU imaging stack (cupy/holoscan/healpy) is importable.
+
+    Drives ``smoovie``'s auto-routing: when true the imaging runs through the Holoscan GPU app
+    (:func:`kremetart.core.smoovie_app.image_via_app`); otherwise it falls back to the CPU
+    :func:`frame_dirty_maps`. Any import error or absent device -> CPU path, so CPU-only CI and
+    machines without a GPU keep working.
+    """
+    try:
+        import cupy
+
+        if cupy.cuda.runtime.getDeviceCount() < 1:
+            return False
+        import healpy  # noqa: F401
+        import holoscan  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
 def common_phase_direction(hdf_paths) -> tuple[float, float]:
     """Single shared ICRS phase direction: the local zenith RA/Dec at the global mid-time.
 
@@ -266,6 +287,7 @@ def smoovie(
     catalog_cache: str | None = None,
     profile: bool = False,
     nframes: int | None = None,
+    use_gpu: bool | None = None,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
 
@@ -280,6 +302,10 @@ def smoovie(
     TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
     (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
     caps the frames imaged/rendered (a profiling/preview aid).
+
+    ``use_gpu`` selects the imaging backend: ``None`` (default) auto-detects a CUDA device + the
+    Holoscan stack and uses the GPU app when present, else the CPU ``frame_dirty_maps``; pass
+    ``True``/``False`` to force one. It is a core-only knob (not a CLI flag).
     """
     import tempfile
 
@@ -301,7 +327,20 @@ def smoovie(
 
     print("Making dirty maps")
     with _stage_timer("imaging", timings):
-        maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
+        use = _gpu_imaging_available() if use_gpu is None else use_gpu
+        if use:
+            from kremetart.core.smoovie_app import image_via_app
+
+            maps, stamps = image_via_app(
+                hdf_paths,
+                nside,
+                correct_gains=correct_gains,
+                phase_ra_deg=phase_ra_deg,
+                phase_dec_deg=phase_dec_deg,
+                nframes=nframes,
+            )
+        else:
+            maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
 
     tracks = None
     if overlay_catalog:

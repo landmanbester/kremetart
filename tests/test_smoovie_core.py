@@ -140,7 +140,7 @@ def test_smoovie_produces_movie(tmp_path):
 
     _hdfs()  # skip if reference data absent
     out = tmp_path / "movie.mp4"
-    smoovie(hdf_dir=_DATA, movie=out, nside=32, fps=2)
+    smoovie(hdf_dir=_DATA, movie=out, nside=32, fps=2, use_gpu=False)
     assert out.exists() and out.stat().st_size > 0
 
 
@@ -197,7 +197,7 @@ def test_smoovie_honors_explicit_phase_direction(tmp_path, monkeypatch):
     monkeypatch.setattr(sm, "render_frames", fake_render)
     monkeypatch.setattr(sm, "common_phase_direction", fail_cpd)
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, phase_ra_deg=12.0, phase_dec_deg=-20.0)
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, phase_ra_deg=12.0, phase_dec_deg=-20.0, use_gpu=False)
     assert captured["rot"] == (12.0, -20.0)
 
 
@@ -219,7 +219,7 @@ def test_smoovie_auto_phase_direction_used(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sm, "render_frames", fake_render)
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, use_gpu=False)
     assert captured["rot"] == (123.0, 45.0)
 
 
@@ -243,7 +243,14 @@ def test_smoovie_overlay_passes_tracks(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sm, "render_frames", fake_render)
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, overlay_catalog=True, catalog_elevation_deg=30.0)
+    sm.smoovie(
+        hdf_dir=_DATA,
+        movie=tmp_path / "m.mp4",
+        nside=1,
+        overlay_catalog=True,
+        catalog_elevation_deg=30.0,
+        use_gpu=False,
+    )
     assert captured["tracks"] == {"SAT": [(0, 1.0, 2.0, 1.0)]}
 
 
@@ -265,7 +272,7 @@ def test_smoovie_no_overlay_passes_none_tracks(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sm, "render_frames", fake_render)
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1)
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, use_gpu=False)
     assert captured["tracks"] is None
 
 
@@ -339,7 +346,7 @@ def test_smoovie_profile_prints(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sm, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, profile=True)
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, profile=True, use_gpu=False)
     out = capsys.readouterr().out
     assert "smoovie profile" in out
     assert "imaging" in out and "render" in out
@@ -360,7 +367,7 @@ def test_smoovie_nframes_flows_to_imaging(tmp_path, monkeypatch):
     monkeypatch.setattr(sm, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, nframes=7)
+    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, nframes=7, use_gpu=False)
     assert captured.get("nframes") == 7
 
 
@@ -385,6 +392,6 @@ def test_smoovie_default_catalog_cache_path(tmp_path, monkeypatch):
     monkeypatch.setattr(sat, "satellite_tracks", fake_tracks)
 
     movie = tmp_path / "m.mp4"
-    sm.smoovie(hdf_dir=_DATA, movie=movie, nside=1, overlay_catalog=True, nframes=3)
+    sm.smoovie(hdf_dir=_DATA, movie=movie, nside=1, overlay_catalog=True, nframes=3, use_gpu=False)
     assert captured["cache_path"] == str(movie) + ".catalog.zarr"
     assert captured["nframes"] == 3
