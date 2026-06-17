@@ -51,7 +51,9 @@ def sm_stub(sm, monkeypatch):
 
     Tests add their own render / tracks / phase patches via ``monkeypatch.setattr(sm_stub, ...)``.
     """
-    monkeypatch.setattr(sm, "image_via_app", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"]))
+    monkeypatch.setattr(
+        sm, "image_via_app", lambda paths, nside, **k: ([np.zeros(12)], [np.zeros(12)], [np.zeros(12)], ["t UTC"])
+    )
     monkeypatch.setattr(sm.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
     monkeypatch.setattr(sm.subprocess, "run", lambda *a, **k: None)
     return sm
@@ -147,7 +149,7 @@ def test_smoovie_requires_both_phase_components(tmp_path, sm):
 def test_smoovie_honors_explicit_phase_direction(tmp_path, hdf_dir, sm_stub, monkeypatch):
     captured = {}
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None, diverging=False):
         captured["rot"] = rot
         return [Path("frame_0000.png")]
 
@@ -166,7 +168,7 @@ def test_smoovie_auto_phase_direction_used(tmp_path, hdf_dir, sm_stub, monkeypat
 
     monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (123.0, 45.0))
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None, diverging=False):
         captured["rot"] = rot
         return [Path("frame_0000.png")]
 
@@ -183,7 +185,7 @@ def test_smoovie_overlay_passes_tracks(tmp_path, hdf_dir, sm_stub, monkeypatch):
     # Patch the name smoovie actually calls (sm.satellite_tracks), so no API/catalogue read happens.
     monkeypatch.setattr(sm_stub, "satellite_tracks", lambda paths, elev, **k: {"SAT": [(0, 1.0, 2.0, 1.0)]})
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None, diverging=False):
         captured["tracks"] = tracks
         return [Path("frame_0000.png")]
 
@@ -204,7 +206,7 @@ def test_smoovie_no_overlay_passes_none_tracks(tmp_path, hdf_dir, sm_stub, monke
 
     monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
 
-    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None):
+    def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True, tracks=None, diverging=False):
         captured["tracks"] = tracks
         return [Path("frame_0000.png")]
 
@@ -219,7 +221,7 @@ def test_smoovie_nframes_flows_to_imaging(tmp_path, hdf_dir, sm_stub, monkeypatc
 
     def fake_image(paths, nside, **k):
         captured.update(k)
-        return ([np.zeros(12)], ["t UTC"])
+        return ([np.zeros(12)], [np.zeros(12)], [np.zeros(12)], ["t UTC"])
 
     monkeypatch.setattr(sm_stub, "image_via_app", fake_image)
     monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))

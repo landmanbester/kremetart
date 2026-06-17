@@ -27,6 +27,7 @@ from holoscan.conditions import CountCondition
 
 from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
+from kremetart.operators.iwp_kalman import IWPKalmanOperator
 from kremetart.utils import unix_to_utc
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
@@ -44,12 +45,16 @@ class SmooviePipeline(hs.core.Application):
         nside: int,
         *args,
         nest: bool = True,
+        sigma2: float = 1e-3,
+        noise: float = 1e-2,
         **kwargs,
     ):
         self.prepared_zarr = str(prepared_zarr)
         self.output_zarr = str(output_zarr)
         self.nside = nside
         self.nest = nest
+        self.sigma2 = sigma2
+        self.noise = noise
         super().__init__(*args, **kwargs)
 
         ds = xr.open_zarr(self.prepared_zarr)
@@ -66,6 +71,7 @@ class SmooviePipeline(hs.core.Application):
             zarr_path=self.prepared_zarr,
         )
         imager = HealpixDFTOperator(self, self.nside, self.freqs, name="imager", nest=self.nest)
+        iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
         writer = HealpixWriterOperator(
             self,
             self.ntime,
@@ -79,40 +85,56 @@ class SmooviePipeline(hs.core.Application):
             imager,
             {("VISIBILITY", "VISIBILITY"), ("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("time", "time")},
         )
-        self.add_flow(imager, writer, {("cube", "cube"), ("time_out", "time_out")})
+        self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
+        self.add_flow(
+            iwp,
+            writer,
+            {("cube", "cube"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
+        )
 
 
 def image_via_app(
     hdf_paths,
     nside: int,
     *,
+    output_zarr,
+    overwrite: bool = False,
     correct_gains: bool = False,
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
     nframes: int | None = None,
     nest: bool = True,
+    iwp_sigma: float = 1e-3,
+    iwp_noise: float = 1e-2,
 ):
-    """Image the HDF sequence through the GPU Holoscan app; return ``(maps, stamps)``.
+    """Image the HDF sequence through the GPU Holoscan app; return ``(dirty, filtered, znorm, stamps)``.
 
-    Runs the host prepare-step into a temp zarr, streams it through :class:`SmooviePipeline`, then
-    loads the ``(TIME, npix)`` output zarr back to host: a list of ``(npix,)`` dirty maps (one per
-    frame, in order) and a list of UTC stamp strings. This is the single imaging seam :func:`smoovie`
-    drives; the wiring tests stub it to exercise the host orchestration without running the GPU.
+    Runs the host prepare-step into a temp zarr, streams it through :class:`SmooviePipeline` (imager
+    -> per-pixel IWP-Kalman filter -> writer), and writes a DURABLE ``output_zarr`` holding the
+    ``(TIME, PIX)`` ``dirty`` / ``filtered`` / ``znorm`` variables, left in place for inspection.
+    Loads each variable back to host as a list of ``(npix,)`` maps (one per frame, in order) plus a
+    list of UTC stamp strings. This is the single imaging seam :func:`smoovie` drives; the
+    host-wiring tests stub it to exercise orchestration without running the GPU.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
+        output_zarr: durable output zarr path (overwritten only if it does not already exist; the
+            caller is responsible for the fail-fast existence check).
+        overwrite: reserved for symmetry with the caller; the writer always writes ``mode="w"``.
         correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
         phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
         nframes: optional cap on the number of frames imaged.
-        nest: NESTED HEALPix ordering (default True; matches the rest of the pipeline).
+        nest: NESTED HEALPix ordering (default True).
+        iwp_sigma: IWP driving variance sigma^2.
+        iwp_noise: measurement-noise variance R.
 
     Returns:
-        ``(maps, stamps)``.
+        ``(dirty, filtered, znorm, stamps)``.
     """
+    output = Path(output_zarr)
     with tempfile.TemporaryDirectory() as td:
         prepared = Path(td) / "prepared.zarr"
-        output = Path(td) / "dirty.zarr"
         config = Path(td) / "config.yaml"
         config.touch()  # an empty Holoscan config is valid
 
@@ -125,17 +147,18 @@ def image_via_app(
             nframes=nframes,
         )
 
-        app = SmooviePipeline(prepared, output, nside, nest=nest)
+        app = SmooviePipeline(prepared, output, nside, nest=nest, sigma2=iwp_sigma, noise=iwp_noise)
         app.config(str(config))
         app.run()
 
-        ds = xr.open_zarr(str(output), chunks=None)  # eager load before the temp dir is removed
+        ds = xr.open_zarr(str(output), chunks=None)  # eager load
         dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
+        filtered = np.asarray(ds["filtered"].values)
+        znorm = np.asarray(ds["znorm"].values)
         times = np.asarray(ds["TIME"].values)
 
-    maps = list(dirty)
     stamps = [unix_to_utc(t) for t in times]
-    return maps, stamps
+    return list(dirty), list(filtered), list(znorm), stamps
 
 
 def _overlay_tracks(ax, tracks, frame_index):
@@ -178,6 +201,7 @@ def render_frames(
     rot: tuple[float, float] | None = None,
     nest: bool = True,
     tracks=None,
+    diverging: bool = False,
 ):
     """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths.
 
@@ -188,10 +212,15 @@ def render_frames(
 
     outdir = Path(outdir)
     stacked = np.concatenate([np.asarray(m) for m in maps])
-    vmin, vmax = np.percentile(stacked, [1.0, 99.0])
+    if diverging:
+        # Symmetric scale centred on 0 with a diverging cmap (for the normalised innovation z_k).
+        vmax = float(np.percentile(np.abs(stacked), 99.0))
+        vmin, cmap = -vmax, "coolwarm"
+    else:
+        vmin, vmax = (float(v) for v in np.percentile(stacked, [1.0, 99.0]))
     paths = []
     for i, (m, ts) in enumerate(zip(maps, timestamps)):
-        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax), rot=rot)
+        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=vmin, max=vmax, rot=rot)
         hp.graticule()
         if tracks:
             _overlay_tracks(plt.gca(), tracks, i)
@@ -200,6 +229,28 @@ def render_frames(
         plt.close("all")
         paths.append(out)
     return paths
+
+
+def _encode_movie(first_png, fps: int, out) -> None:
+    """Encode the ``frame_%04d.png`` sequence in ``first_png``'s directory to mp4 ``out``."""
+    pattern = str(Path(first_png).parent / "frame_%04d.png")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            pattern,
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 def smoovie(
@@ -215,6 +266,9 @@ def smoovie(
     catalog_elevation_deg: float = 45.0,
     catalog_cache: str | None = None,
     profile: bool = False,
+    iwp_sigma: float = 1e-3,
+    iwp_noise: float = 1e-2,
+    overwrite: bool = False,
     nframes: int | None = None,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
@@ -248,15 +302,23 @@ def smoovie(
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
 
+    output_zarr = Path(str(movie) + ".zarr")
+    if output_zarr.exists() and not overwrite:
+        raise FileExistsError(f"{output_zarr} already exists; pass overwrite=True to replace it.")
+
     timings = []
     with stage_timer("imaging", timings):
-        maps, stamps = image_via_app(
+        dirty, filtered, znorm, stamps = image_via_app(
             hdf_paths,
             nside,
+            output_zarr=output_zarr,
+            overwrite=overwrite,
             correct_gains=correct_gains,
             phase_ra_deg=phase_ra_deg,
             phase_dec_deg=phase_dec_deg,
             nframes=nframes,
+            iwp_sigma=iwp_sigma,
+            iwp_noise=iwp_noise,
         )
 
     tracks = None
@@ -264,32 +326,33 @@ def smoovie(
         cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
         tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
+    movie_specs = [
+        (dirty, Path(movie), False),
+        (filtered, Path(str(movie) + ".filtered.mp4"), False),
+        (znorm, Path(str(movie) + ".znorm.mp4"), True),
+    ]
     with tempfile.TemporaryDirectory() as td:
         with stage_timer("render", timings):
-            png_paths = render_frames(
-                maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks
-            )
+            rendered = []
+            for frames, out, diverging in movie_specs:
+                subdir = Path(td) / out.name
+                subdir.mkdir()
+                pngs = render_frames(
+                    frames,
+                    stamps,
+                    nside,
+                    cmap,
+                    subdir,
+                    rot=(phase_ra_deg, phase_dec_deg),
+                    tracks=tracks,
+                    diverging=diverging,
+                )
+                rendered.append((pngs, out))
         with stage_timer("encode", timings):
-            pattern = str(Path(png_paths[0]).parent / "frame_%04d.png")
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-framerate",
-                    str(fps),
-                    "-i",
-                    pattern,
-                    "-vf",
-                    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                    "-pix_fmt",
-                    "yuv420p",
-                    str(movie),
-                ],
-                check=True,
-                capture_output=True,
-            )
+            for pngs, out in rendered:
+                _encode_movie(pngs[0], fps, out)
 
     if profile:
-        print_profile(timings, nframes=len(maps))
+        print_profile(timings, nframes=len(dirty))
 
     return movie
