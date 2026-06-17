@@ -34,13 +34,25 @@ uv run pytest tests/test_smoovie.py -q
 ```
 
 Then render the snapshots into a HEALPix all-sky movie with `smoovie` (needs a CUDA GPU and
-[`ffmpeg`](https://ffmpeg.org/) on `PATH`):
+[`ffmpeg`](https://ffmpeg.org/) on `PATH`). `smoovie` images **one frame per sub-integration** —
+the bundled data is nine ~1-minute snapshots of ~1-second sub-integrations, i.e. **540 frames** — so
+render the whole sequence at a watchable frame rate:
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/tart.mp4 --nside 64 --nframes 4
+uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/tart.mp4 --nside 64 --fps 12
 ```
 
-This writes `/tmp/tart.mp4` (the dirty all-sky movie) alongside `tart.mp4.filtered.mp4`,
-`tart.mp4.znorm.mp4`, and a durable `tart.mp4.zarr`. `smoovie` refuses to overwrite an existing
-`<movie>.zarr` — pass `--overwrite` to replace it. `smoovie` works on any directory of TART `*.hdf`
+Rendering dominates the runtime (~0.8 s/frame for the three movies), so the full 540-frame render
+takes a few minutes. For a quick look, cap the number of frames with `--nframes` — but note this
+caps the *total* imaged sub-integrations, and only a few seconds of sky barely moves, so use a
+generous value (e.g. the first ~2 minutes of sky):
+
+```bash
+uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/preview.mp4 --nside 64 --fps 12 --nframes 120
+```
+
+Either command writes the dirty all-sky movie (`/tmp/tart.mp4`) alongside `*.filtered.mp4` (the IWP
+filtered flux), `*.znorm.mp4` (the normalised innovation), and a durable `*.zarr` holding the
+`dirty`/`filtered`/`znorm` `(TIME, PIX)` maps. `smoovie` refuses to overwrite an existing
+`<movie>.zarr` — pass `--overwrite` to replace it. It works on any directory of TART `*.hdf`
 snapshots; see `kremetart smoovie --help` for all options.
