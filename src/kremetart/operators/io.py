@@ -246,7 +246,8 @@ class HealpixWriterOperator(Operator):
     def start(self):
         # dask scaffold: da.empty allocates no data, only the zarr structure to write regions into.
         data_vars = {
-            "dirty": (("TIME", "PIX"), da.empty((self.ntime, self.npix), chunks=(1, self.npix), dtype=np.float32)),
+            name: (("TIME", "PIX"), da.empty((self.ntime, self.npix), chunks=(1, self.npix), dtype=np.float32))
+            for name in ("dirty", "filtered", "znorm")
         }
         ds = xr.Dataset(
             data_vars=data_vars,
@@ -256,18 +257,24 @@ class HealpixWriterOperator(Operator):
 
     def setup(self, spec: OperatorSpec):
         spec.input("cube")
+        spec.input("filtered")
+        spec.input("znorm")
         spec.input("time_out")
 
     def compute(self, op_input, op_output, context):
         cube = cp.asnumpy(cp.asarray(op_input.receive("cube")))  # (1, npix)
+        filtered = cp.asnumpy(cp.asarray(op_input.receive("filtered")))  # (1, npix)
+        znorm = cp.asnumpy(cp.asarray(op_input.receive("znorm")))  # (1, npix)
         time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
         dso = xr.Dataset(
-            data_vars={"dirty": (("TIME", "PIX"), cube.astype(np.float32))},
+            data_vars={
+                "dirty": (("TIME", "PIX"), cube.astype(np.float32)),
+                "filtered": (("TIME", "PIX"), filtered.astype(np.float32)),
+                "znorm": (("TIME", "PIX"), znorm.astype(np.float32)),
+            },
             coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
         )
         dso.to_zarr(self.output_dataset, region="auto")
-
-        # also write the png stamp for this frame, if requested
 
     def stop(self):
         pass
