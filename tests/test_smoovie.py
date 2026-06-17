@@ -71,17 +71,19 @@ def test_gpu_operators_import():
     assert IWPKalmanOperator
 
 
-def test_image_via_app_end_to_end(hdf_paths):
-    """The real Holoscan app images one frame per sub-integration into finite ``(npix,)`` maps."""
+def test_image_via_app_end_to_end(hdf_paths, tmp_path):
+    """The real Holoscan app images + filters one frame per sub-integration into finite maps."""
     from kremetart.core.smoovie import image_via_app
 
     nside = 8
     npix = 12 * nside * nside
-    maps, stamps = image_via_app(hdf_paths[:1], nside, correct_gains=True, nframes=3)
-    assert len(maps) == len(stamps) == 3
-    for m in maps:
+    out = tmp_path / "imaging.zarr"
+    dirty, filtered, znorm, stamps = image_via_app(hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3)
+    assert len(dirty) == len(filtered) == len(znorm) == len(stamps) == 3
+    for m in (*dirty, *filtered, *znorm):
         assert m.shape == (npix,)
         assert np.all(np.isfinite(m))
+    assert out.exists()  # durable: left in place for inspection
     assert "UTC" in stamps[0]
 
 
@@ -281,3 +283,19 @@ def test_smoovie_produces_movie(tmp_path, hdf_dir, catalog_cache, catalog_elevat
         catalog_elevation_deg=catalog_elevation,
     )
     assert out.exists() and out.stat().st_size > 0
+    assert (tmp_path / "movie.mp4.filtered.mp4").exists()
+    assert (tmp_path / "movie.mp4.znorm.mp4").exists()
+    assert (tmp_path / "movie.mp4.zarr").exists()
+
+
+def test_smoovie_overwrite_fail_fast(tmp_path, hdf_dir, sm_stub, monkeypatch):
+    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
+    monkeypatch.setattr(sm_stub, "render_frames", lambda *a, **k: [Path("frame_0000.png")])
+    movie = tmp_path / "m.mp4"
+    (tmp_path / "m.mp4.zarr").mkdir()  # pre-existing output
+
+    with pytest.raises(FileExistsError):
+        sm_stub.smoovie(hdf_dir=hdf_dir, movie=movie, nside=1)
+
+    # With overwrite set, the guard passes and orchestration proceeds (imaging/encode stubbed).
+    sm_stub.smoovie(hdf_dir=hdf_dir, movie=movie, nside=1, overwrite=True)
