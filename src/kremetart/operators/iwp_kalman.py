@@ -34,6 +34,8 @@ class IWPKalmanOperator(Operator):
 
     def start(self):
         # Diffuse prior: zero mean, large covariance. Frame 0 runs update-only (no Delta yet).
+        # State is intentionally float64: the _DIFFUSE=1e6 covariance is conditioning-sensitive;
+        # cube may arrive as float32 but upcasts harmlessly in the innovation (y - X_pred[:,0]).
         self.X = cp.zeros((self.npix, 2))
         self.P = cp.broadcast_to(cp.eye(2) * _DIFFUSE, (self.npix, 2, 2)).copy()
         self.t_prev = None
@@ -52,6 +54,8 @@ class IWPKalmanOperator(Operator):
         y = cube[0]  # (npix,)
         t = float(time_out[0])
 
+        # Assumes in-order, non-duplicate frames (dt > 0); the single-threaded reader guarantees
+        # this as wired — a dt <= 0 would break covariance PSD.
         if self.t_prev is not None:
             a, q = iwp_transition(t - self.t_prev, self.sigma2, xp=cp)
             self.X, self.P = kalman_predict(self.X, self.P, a, q, xp=cp)
