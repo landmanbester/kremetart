@@ -98,7 +98,6 @@ def image_via_app(
     nside: int,
     *,
     output_zarr,
-    overwrite: bool = False,
     correct_gains: bool = False,
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
@@ -119,9 +118,8 @@ def image_via_app(
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
-        output_zarr: durable output zarr path (overwritten only if it does not already exist; the
-            caller is responsible for the fail-fast existence check).
-        overwrite: reserved for symmetry with the caller; the writer always writes ``mode="w"``.
+        output_zarr: durable output zarr path; the caller is responsible for the fail-fast existence
+            check before calling this function.
         correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
         phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
         nframes: optional cap on the number of frames imaged.
@@ -278,12 +276,19 @@ def smoovie(
     zenith RA/Dec at the global mid-time (:func:`common_phase_direction`); supply both to override
     (the multi-TART mosaic hook). Supplying only one raises ``ValueError``.
 
+    Writes a durable ``<movie>.zarr`` holding per-pixel ``dirty``, ``filtered``, and ``znorm``
+    ``(TIME, PIX)`` maps, then renders THREE movies: ``<movie>`` (dirty flux), ``<movie>.filtered.mp4``
+    (IWP-Kalman filtered flux), and ``<movie>.znorm.mp4`` (normalised innovation on a diverging colour
+    scale). Raises ``FileExistsError`` if ``<movie>.zarr`` already exists unless ``overwrite=True``.
+
     ``correct_gains`` divides the visibilities by the per-antenna gain product (TART's own solution)
     before imaging. ``overlay_catalog`` overlays each catalogue satellite above ``catalog_elevation_deg``
     (degrees) as a trailing track + marker + label on every frame; it requires network access to the
     TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
     (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
-    caps the frames imaged/rendered (a profiling/preview aid).
+    caps the frames imaged/rendered (a profiling/preview aid). ``iwp_sigma`` sets the IWP driving
+    variance σ², ``iwp_noise`` sets the measurement-noise variance R, and ``overwrite`` allows
+    replacing an existing ``<movie>.zarr``.
     """
 
     if hdf_dir is None or movie is None:
@@ -312,7 +317,6 @@ def smoovie(
             hdf_paths,
             nside,
             output_zarr=output_zarr,
-            overwrite=overwrite,
             correct_gains=correct_gains,
             phase_ra_deg=phase_ra_deg,
             phase_dec_deg=phase_dec_deg,
