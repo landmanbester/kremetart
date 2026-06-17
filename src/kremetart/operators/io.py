@@ -176,7 +176,7 @@ class ResultWriterOperator(Operator):
 class HealpixZarrReaderOperator(Operator):
     """Stream a prepared imaging zarr (VISIBILITY, WEIGHT, B_ROT, time) one frame at a time to the GPU.
 
-    Reads the host prepare-step output (:func:`kremetart.core.smoovie_prepare.prepare_msv4_zarr`).
+    Reads the host prepare-step output (:func:`kremetart.utils.read_tart_hdf.prepare_msv4_zarr`).
     Unlike :class:`XarrayZarrReaderOperator` it carries the precomputed ``B_ROT`` and drops UVW/FLAG
     (the HEALPix imager does not need them).
     """
