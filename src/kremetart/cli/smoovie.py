@@ -86,6 +86,24 @@ def smoovie(
             help="Print a per-stage timing summary.",
         ),
     ] = False,
+    iwp_sigma: Annotated[
+        float,
+        typer.Option(
+            help="IWP driving variance (sigma^2) for the per-pixel Kalman filter.",
+        ),
+    ] = 0.001,
+    iwp_noise: Annotated[
+        float,
+        typer.Option(
+            help="Measurement-noise variance (R) for the per-pixel Kalman filter.",
+        ),
+    ] = 0.01,
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            help="Overwrite the output <movie>.zarr if it already exists.",
+        ),
+    ] = False,
     nframes: Annotated[
         int | None,
         typer.Option(
@@ -140,6 +158,9 @@ def smoovie(
                     catalog_elevation_deg=catalog_elevation_deg,
                     catalog_cache=catalog_cache,
                     profile=profile,
+                    iwp_sigma=iwp_sigma,
+                    iwp_noise=iwp_noise,
+                    overwrite=overwrite,
                     nframes=nframes,
                     movie=movie,
                 ),
@@ -161,6 +182,9 @@ def smoovie(
                 catalog_elevation_deg=catalog_elevation_deg,
                 catalog_cache=catalog_cache,
                 profile=profile,
+                iwp_sigma=iwp_sigma,
+                iwp_noise=iwp_noise,
+                overwrite=overwrite,
                 nframes=nframes,
                 movie=movie,
             )
@@ -191,6 +215,9 @@ def smoovie(
             catalog_elevation_deg=catalog_elevation_deg,
             catalog_cache=catalog_cache,
             profile=profile,
+            iwp_sigma=iwp_sigma,
+            iwp_noise=iwp_noise,
+            overwrite=overwrite,
             nframes=nframes,
             movie=movie,
         ),

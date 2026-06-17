@@ -58,6 +58,21 @@ cabs:
           Print a per-stage timing summary.
         dtype: bool
         default: false
+      iwp-sigma:
+        info:
+          IWP driving variance (sigma^2) for the per-pixel Kalman filter.
+        dtype: float
+        default: 0.001
+      iwp-noise:
+        info:
+          Measurement-noise variance (R) for the per-pixel Kalman filter.
+        dtype: float
+        default: 0.01
+      overwrite:
+        info:
+          Overwrite the output <movie>.zarr if it already exists.
+        dtype: bool
+        default: false
       nframes:
         info:
           Cap the number of frames imaged/rendered (profiling/preview aid).
