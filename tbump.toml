@@ -1,5 +1,5 @@
 [version]
-current = "0.0.0"
+current = "0.0.1"
 
 # Version format: PEP 440 with optional pre-release and post-release
 regex = '''

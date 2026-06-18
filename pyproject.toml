@@ -1,6 +1,6 @@
 [project]
 name = "kremetart"
-version = "0.0.0"
+version = "0.0.1"
 description = "Kalman Real-time Evidence Monitoring Extractor for TART"
 readme = "README.md"
 requires-python = ">=3.10"
