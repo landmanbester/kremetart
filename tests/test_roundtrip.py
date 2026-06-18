@@ -52,11 +52,6 @@ def _assert_roundtrip(command_name: str) -> None:
             assert orig == gen, f"Line {i} differs in {command_name}:\n  Original:  {orig}\n  Generated: {gen}"
 
 
-def test_roundtrip_onboard() -> None:
-    """The onboard command must round-trip cleanly through a cab."""
-    _assert_roundtrip("onboard")
-
-
 def test_roundtrip_smoovie() -> None:
     """The smoovie command must round-trip cleanly through a cab."""
     _assert_roundtrip("smoovie")

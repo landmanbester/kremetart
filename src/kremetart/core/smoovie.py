@@ -1,136 +1,162 @@
-"""Render a TART HDF sequence into a HEALPix all-sky movie.
+"""
+Render a TART HDF sequence into a HEALPix all-sky movie.
+Starts by concatenating the HDFs into a single MSv4 zarr, then streams it through the GPU Holoscan app.
+The core imaging algorithm is implemented as a GPU Holoscan operator which should completely bypass the CPU.
+Every sub-integration is imaged in a fixed equatorial (ICRS) HEALPix grid with a common phase center.
+Renders Mollweide frames with a fixed colour scale and encodes them to mp4 with ffmpeg.
 
-Images every sub-integration across the input HDFs onto the fixed equatorial (ICRS) HEALPix grid
-(full sphere), all centered on a single common phase direction (the local zenith RA/Dec at the
-global mid-time, reusable as the shared field center for multi-TART mosaicking). Renders Mollweide
-frames with a fixed colour scale and encodes them to mp4 with ffmpeg. See
-docs/superpowers/specs/2026-06-16-smoovie-common-frame-design.md (amending the original
-docs/superpowers/specs/2026-06-15-smoovie-design.md).
 """
 
 from __future__ import annotations
 
-import contextlib
-import datetime
-import time
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 
+matplotlib.use("Agg")
+import shutil
+import subprocess
+import tempfile
 
-def _partition(dt):
-    return dt[list(dt.children)[0]]
+import healpy as hp
+import holoscan as hs
+import matplotlib.pyplot as plt
+import xarray as xr
+from holoscan.conditions import CountCondition
 
-
-def _utc(unix_seconds) -> str:
-    dt = datetime.datetime.fromtimestamp(float(unix_seconds), tz=datetime.timezone.utc)
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def common_phase_direction(hdf_paths) -> tuple[float, float]:
-    """Single shared ICRS phase direction: the local zenith RA/Dec at the global mid-time.
-
-    Reads the first and last timestamps across all files, takes the midpoint, and converts the local
-    zenith (AltAz alt=90 deg) at that time to ICRS. Reusable as the common field center for
-    multi-TART mosaicking: compute once, hand the same value to every TART.
-
-    Args:
-        hdf_paths: ordered iterable of TART HDF paths.
-
-    Returns:
-        ``(ra_deg, dec_deg)`` of the local zenith at the global mid-time, in ICRS.
-
-    Raises:
-        ValueError: if ``hdf_paths`` is empty.
-    """
-    import astropy.units as u
-    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-    from astropy.time import Time
-
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
-
-    t_lo = t_hi = None
-    info = None
-    for path in hdf_paths:
-        main = _partition(read_hdf_as_msv4(path)).ds
-        times = np.asarray(main.time.values)
-        lo, hi = float(times.min()), float(times.max())
-        t_lo = lo if t_lo is None else min(t_lo, lo)
-        t_hi = hi if t_hi is None else max(t_hi, hi)
-        # Site info comes from the first file; all inputs are assumed to share the same array site.
-        if info is None:
-            info = main.attrs["observation_info"]
-    if info is None:
-        raise ValueError("no HDF files provided")
-
-    t_mid = 0.5 * (t_lo + t_hi)
-    loc = EarthLocation(
-        lat=info["site_latitude_deg"] * u.deg,
-        lon=info["site_longitude_deg"] * u.deg,
-        height=info["site_altitude_m"] * u.m,
-    )
-    aa = AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=Time(t_mid, format="unix", scale="utc"), location=loc)
-    icrs = SkyCoord(aa).icrs
-    return float(icrs.ra.deg), float(icrs.dec.deg)
+from kremetart.operators.dft_healpix import HealpixDFTOperator
+from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
+from kremetart.operators.iwp_kalman import IWPKalmanOperator
+from kremetart.utils import unix_to_utc
+from kremetart.utils.profiling import print_profile, stage_timer
+from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
+from kremetart.utils.rephasing import common_phase_direction
+from kremetart.utils.satellites import satellite_tracks
 
 
-def _correct_file_gains(node, vis, wgt, *, xp=np):
-    """Divide a file's vis/weight by the per-antenna gain product (``gain_xds.GAIN``).
+class SmooviePipeline(hs.core.Application):
+    """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr."""
 
-    Maps each baseline to its two antenna gains the same way :func:`itrs_baselines` maps
-    antennas, then delegates to :func:`kremetart.utils.gains.apply_inverse_gains`. The gain
-    snapshot is per-file (time-independent), so this runs once before the sub-integration loop.
-    """
-    from kremetart.utils.gains import apply_inverse_gains
+    def __init__(
+        self,
+        prepared_zarr: Path | str,
+        output_zarr: Path | str,
+        nside: int,
+        *args,
+        nest: bool = True,
+        sigma2: float = 1e-3,
+        noise: float = 1e-2,
+        **kwargs,
+    ):
+        self.prepared_zarr = str(prepared_zarr)
+        self.output_zarr = str(output_zarr)
+        self.nside = nside
+        self.nest = nest
+        self.sigma2 = sigma2
+        self.noise = noise
+        super().__init__(*args, **kwargs)
 
-    antenna = node["antenna_xds"].to_dataset(inherit=False)
-    index = {name: i for i, name in enumerate(antenna.antenna_name.values)}
-    a1 = np.array([index[n] for n in node.ds.baseline_antenna1_name.values])
-    a2 = np.array([index[n] for n in node.ds.baseline_antenna2_name.values])
-    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
-    return apply_inverse_gains(vis, wgt, gains, a1, a2, xp=xp)
+        ds = xr.open_zarr(self.prepared_zarr)
+        self.ntime = int(ds.time.size)
+        self.out_times = ds.time.values
+        self.freqs = ds.frequency.values
+        self.npix = hp.nside2npix(nside)
+
+    def compose(self):
+        reader = HealpixZarrReaderOperator(
+            self,
+            CountCondition(self, self.ntime),
+            name="reader",
+            zarr_path=self.prepared_zarr,
+        )
+        imager = HealpixDFTOperator(self, self.nside, self.freqs, name="imager", nest=self.nest)
+        iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
+        writer = HealpixWriterOperator(
+            self,
+            self.ntime,
+            self.npix,
+            name="writer",
+            output_dataset=self.output_zarr,
+            out_times=self.out_times,
+        )
+        self.add_flow(
+            reader,
+            imager,
+            {("VISIBILITY", "VISIBILITY"), ("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("time", "time")},
+        )
+        self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
+        self.add_flow(
+            iwp,
+            writer,
+            {("cube", "cube"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
+        )
 
 
-def frame_dirty_maps(hdf_paths, nside: int, *, correct_gains: bool = False, nframes: int | None = None, xp=np):
-    """Return (maps, timestamps, pix_vec): one full-sphere dirty map per sub-integration.
+def image_via_app(
+    hdf_paths,
+    nside: int,
+    *,
+    output_zarr,
+    correct_gains: bool = False,
+    phase_ra_deg: float | None = None,
+    phase_dec_deg: float | None = None,
+    nframes: int | None = None,
+    nest: bool = True,
+    iwp_sigma: float = 1e-3,
+    iwp_noise: float = 1e-2,
+):
+    """Image the HDF sequence through the GPU Holoscan app; return ``(dirty, filtered, znorm, stamps)``.
+
+    Runs the host prepare-step into a temp zarr, streams it through :class:`SmooviePipeline` (imager
+    -> per-pixel IWP-Kalman filter -> writer), and writes a DURABLE ``output_zarr`` holding the
+    ``(TIME, PIX)`` ``dirty`` / ``filtered`` / ``znorm`` variables, left in place for inspection.
+    Loads each variable back to host as a list of ``(npix,)`` maps (one per frame, in order) plus a
+    list of UTC stamp strings. This is the single imaging seam :func:`smoovie` drives; the
+    host-wiring tests stub it to exercise orchestration without running the GPU.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
-        correct_gains: divide vis/weights by the per-antenna gain product before imaging.
-        nframes: optional cap on the total number of frames produced (profiling/preview aid).
-        xp: array module (numpy by default).
+        output_zarr: durable output zarr path; the caller is responsible for the fail-fast existence
+            check before calling this function.
+        correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
+        phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
+        nframes: optional cap on the number of frames imaged.
+        nest: NESTED HEALPix ordering (default True).
+        iwp_sigma: IWP driving variance sigma^2.
+        iwp_noise: measurement-noise variance R.
 
     Returns:
-        ``(maps, timestamps, pix_vec)`` -- list of ``(npix,)`` real maps (one per sub-integration,
-        across all files, in order), list of UTC strings, and the ``(npix, 3)`` pixel unit vectors.
+        ``(dirty, filtered, znorm, stamps)``.
     """
-    from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
-    from kremetart.utils.rephasing import itrs_baselines
+    output = Path(output_zarr)
+    with tempfile.TemporaryDirectory() as td:
+        prepared = Path(td) / "prepared.zarr"
+        config = Path(td) / "config.yaml"
+        config.touch()  # an empty Holoscan config is valid
 
-    pix_vec = make_pixel_grid(nside, xp=xp)
-    maps, stamps = [], []
-    for p, path in enumerate(hdf_paths):
-        if nframes is not None and len(maps) >= nframes:
-            break
-        node = _partition(read_hdf_as_msv4(path))
-        main = node.ds
-        times = np.asarray(main.time.values)
-        bl = itrs_baselines(node, xp)  # (nbl, 3)
-        vis = np.asarray(main.VISIBILITY.values)[..., 0]  # (n_time, nbl, nchan), drop single-pol axis
-        wgt = np.asarray(main.WEIGHT.values)[..., 0]
-        freqs = np.asarray(main.frequency.values)
-        if correct_gains:
-            vis, wgt = _correct_file_gains(node, vis, wgt, xp=xp)
-        for k in range(times.size):
-            print(f"Done {k}/{times.size} sub-integrations for path {p} out of {len(hdf_paths)} total paths")
-            if nframes is not None and len(maps) >= nframes:
-                break
-            dmap = image_frame(vis[k : k + 1], wgt[k : k + 1], times[k : k + 1], bl, pix_vec, freqs, xp=xp)
-            maps.append(np.asarray(dmap))
-            stamps.append(_utc(times[k]))
-    return maps, stamps, pix_vec
+        prepare_msv4_zarr(
+            hdf_paths,
+            prepared,
+            correct_gains=correct_gains,
+            phase_ra_deg=phase_ra_deg,
+            phase_dec_deg=phase_dec_deg,
+            nframes=nframes,
+        )
+
+        app = SmooviePipeline(prepared, output, nside, nest=nest, sigma2=iwp_sigma, noise=iwp_noise)
+        app.config(str(config))
+        app.run()
+
+        ds = xr.open_zarr(str(output), chunks=None)  # eager load
+        dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
+        filtered = np.asarray(ds["filtered"].values)
+        znorm = np.asarray(ds["znorm"].values)
+        times = np.asarray(ds["TIME"].values)
+
+    stamps = [unix_to_utc(t) for t in times]
+    return list(dirty), list(filtered), list(znorm), stamps
 
 
 def _overlay_tracks(ax, tracks, frame_index):
@@ -173,6 +199,7 @@ def render_frames(
     rot: tuple[float, float] | None = None,
     nest: bool = True,
     tracks=None,
+    diverging: bool = False,
 ):
     """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths.
 
@@ -180,18 +207,18 @@ def render_frames(
     patch sits stably at the projection center across the movie. ``tracks`` (if given) overlays
     per-satellite ICRS trajectories (trailing line + current marker + name label) on each frame.
     """
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import healpy as hp
-    import matplotlib.pyplot as plt
 
     outdir = Path(outdir)
     stacked = np.concatenate([np.asarray(m) for m in maps])
-    vmin, vmax = np.percentile(stacked, [1.0, 99.0])
+    if diverging:
+        # Symmetric scale centred on 0 with a diverging cmap (for the normalised innovation z_k).
+        vmax = float(np.percentile(np.abs(stacked), 99.0))
+        vmin, cmap = -vmax, "coolwarm"
+    else:
+        vmin, vmax = (float(v) for v in np.percentile(stacked, [1.0, 99.0]))
     paths = []
     for i, (m, ts) in enumerate(zip(maps, timestamps)):
-        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=float(vmin), max=float(vmax), rot=rot)
+        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=vmin, max=vmax, rot=rot)
         hp.graticule()
         if tracks:
             _overlay_tracks(plt.gca(), tracks, i)
@@ -202,15 +229,9 @@ def render_frames(
     return paths
 
 
-def encode_movie(png_paths, movie, fps: int):
-    """Encode an ordered PNG sequence into an mp4 with ffmpeg. Returns the movie path."""
-    import shutil
-    import subprocess
-
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
-    movie = Path(movie)
-    pattern = str(Path(png_paths[0]).parent / "frame_%04d.png")
+def _encode_movie(first_png, fps: int, out) -> None:
+    """Encode the ``frame_%04d.png`` sequence in ``first_png``'s directory to mp4 ``out``."""
+    pattern = str(Path(first_png).parent / "frame_%04d.png")
     subprocess.run(
         [
             "ffmpeg",
@@ -223,33 +244,11 @@ def encode_movie(png_paths, movie, fps: int):
             "scale=trunc(iw/2)*2:trunc(ih/2)*2",
             "-pix_fmt",
             "yuv420p",
-            str(movie),
+            str(out),
         ],
         check=True,
         capture_output=True,
     )
-    return movie
-
-
-@contextlib.contextmanager
-def _stage_timer(name, timings):
-    """Record wall-clock seconds for a named stage into ``timings`` (a list of ``(name, seconds)``)."""
-    t0 = time.perf_counter()
-    try:
-        yield
-    finally:
-        timings.append((name, time.perf_counter() - t0))
-
-
-def _print_profile(timings, nframes):
-    """Print a per-stage timing summary table to stdout."""
-    total = sum(dt for _, dt in timings) or 1.0
-    print("\n=== smoovie profile ===")
-    print(f"{'stage':<18}{'seconds':>10}{'%total':>9}{'ms/frame':>11}")
-    for name, dt in timings:
-        per_frame = f"{1000.0 * dt / nframes:.1f}" if nframes else "-"
-        print(f"{name:<18}{dt:>10.3f}{100.0 * dt / total:>8.1f}%{per_frame:>11}")
-    print(f"{'TOTAL':<18}{total:>10.3f}{100.0:>8.1f}%")
 
 
 def smoovie(
@@ -265,6 +264,9 @@ def smoovie(
     catalog_elevation_deg: float = 45.0,
     catalog_cache: str | None = None,
     profile: bool = False,
+    iwp_sigma: float = 1e-3,
+    iwp_noise: float = 1e-2,
+    overwrite: bool = False,
     nframes: int | None = None,
 ):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
@@ -274,14 +276,20 @@ def smoovie(
     zenith RA/Dec at the global mid-time (:func:`common_phase_direction`); supply both to override
     (the multi-TART mosaic hook). Supplying only one raises ``ValueError``.
 
+    Writes a durable ``<movie>.zarr`` holding per-pixel ``dirty``, ``filtered``, and ``znorm``
+    ``(TIME, PIX)`` maps, then renders THREE movies: ``<movie>`` (dirty flux), ``<movie>.filtered.mp4``
+    (IWP-Kalman filtered flux), and ``<movie>.znorm.mp4`` (normalised innovation on a diverging colour
+    scale). Raises ``FileExistsError`` if ``<movie>.zarr`` already exists unless ``overwrite=True``.
+
     ``correct_gains`` divides the visibilities by the per-antenna gain product (TART's own solution)
     before imaging. ``overlay_catalog`` overlays each catalogue satellite above ``catalog_elevation_deg``
     (degrees) as a trailing track + marker + label on every frame; it requires network access to the
     TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
     (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
-    caps the frames imaged/rendered (a profiling/preview aid).
+    caps the frames imaged/rendered (a profiling/preview aid). ``iwp_sigma`` sets the IWP driving
+    variance σ², ``iwp_noise`` sets the measurement-noise variance R, and ``overwrite`` allows
+    replacing an existing ``<movie>.zarr``.
     """
-    import tempfile
 
     if hdf_dir is None or movie is None:
         raise ValueError("hdf_dir and movie are required")
@@ -292,34 +300,63 @@ def smoovie(
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
     if not hdf_paths:
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
-    timings: list[tuple[str, float]] = []
 
-    print("Getting common phase center")
-    with _stage_timer("phase_direction", timings):
-        if phase_ra_deg is None:
-            phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
+    if phase_ra_deg is None:
+        phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
 
-    print("Making dirty maps")
-    with _stage_timer("imaging", timings):
-        maps, stamps, _ = frame_dirty_maps(hdf_paths, nside, correct_gains=correct_gains, nframes=nframes)
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
+
+    output_zarr = Path(str(movie) + ".zarr")
+    if output_zarr.exists() and not overwrite:
+        raise FileExistsError(f"{output_zarr} already exists; pass overwrite=True to replace it.")
+
+    timings = []
+    with stage_timer("imaging", timings):
+        dirty, filtered, znorm, stamps = image_via_app(
+            hdf_paths,
+            nside,
+            output_zarr=output_zarr,
+            correct_gains=correct_gains,
+            phase_ra_deg=phase_ra_deg,
+            phase_dec_deg=phase_dec_deg,
+            nframes=nframes,
+            iwp_sigma=iwp_sigma,
+            iwp_noise=iwp_noise,
+        )
 
     tracks = None
     if overlay_catalog:
-        from kremetart.utils.satellites import satellite_tracks
-
         cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
-        print(f"Getting satellite tracks (cache_path={cache_path})")
-        with _stage_timer("catalog", timings):
-            tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
+        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
+    movie_specs = [
+        (dirty, Path(movie), False),
+        (filtered, Path(str(movie) + ".filtered.mp4"), False),
+        (znorm, Path(str(movie) + ".znorm.mp4"), True),
+    ]
     with tempfile.TemporaryDirectory() as td:
-        print(f"Rendering frames to {td}")
-        with _stage_timer("render", timings):
-            pngs = render_frames(maps, stamps, nside, cmap, Path(td), rot=(phase_ra_deg, phase_dec_deg), tracks=tracks)
-        print("Encoding movie")
-        with _stage_timer("encode", timings):
-            encode_movie(pngs, movie, fps)
+        with stage_timer("render", timings):
+            rendered = []
+            for frames, out, diverging in movie_specs:
+                subdir = Path(td) / out.name
+                subdir.mkdir()
+                pngs = render_frames(
+                    frames,
+                    stamps,
+                    nside,
+                    cmap,
+                    subdir,
+                    rot=(phase_ra_deg, phase_dec_deg),
+                    tracks=tracks,
+                    diverging=diverging,
+                )
+                rendered.append((pngs, out))
+        with stage_timer("encode", timings):
+            for pngs, out in rendered:
+                _encode_movie(pngs[0], fps, out)
 
     if profile:
-        _print_profile(timings, len(maps))
+        print_profile(timings, nframes=len(dirty))
+
     return movie

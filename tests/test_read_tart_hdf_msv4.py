@@ -17,19 +17,11 @@ rephasing-dependent fields are deliberately excluded from the comparison, as is 
 dimensionless-vs-Jy ``VISIBILITY`` units choice.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
+import xarray as xr
 
-xr = pytest.importorskip("xarray")
-pytest.importorskip("xarray_ms")  # registers the "xarray-ms:msv2" engine
-
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4  # noqa: E402  (after importorskip)
-
-_DATA = Path(__file__).parent / "data"
-_HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
-_MS = _DATA / "vis_2026-06-09_08_11_43.476804.ms"
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 
 def _single_partition(dt: "xr.DataTree") -> "xr.DataTree":
@@ -40,19 +32,15 @@ def _single_partition(dt: "xr.DataTree") -> "xr.DataTree":
 
 
 @pytest.fixture(scope="module")
-def reference() -> "xr.DataTree":
+def reference(ref_ms) -> "xr.DataTree":
     """The canonical MSv4 partition node from the tart2ms-converted Measurement Set."""
-    if not _MS.exists():
-        pytest.skip(f"reference MS not present: {_MS}")
-    return _single_partition(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))
+    return _single_partition(xr.open_datatree(str(ref_ms), engine="xarray-ms:msv2"))
 
 
 @pytest.fixture(scope="module")
-def generated() -> "xr.DataTree":
+def generated(ref_hdf) -> "xr.DataTree":
     """The partition node produced by read_hdf_as_msv4 from the raw HDF chunk."""
-    if not _HDF.exists():
-        pytest.skip(f"test HDF not present: {_HDF}")
-    return _single_partition(read_hdf_as_msv4(_HDF))
+    return _single_partition(read_hdf_as_msv4(ref_hdf))
 
 
 def test_partition_has_required_subnodes(reference, generated) -> None:

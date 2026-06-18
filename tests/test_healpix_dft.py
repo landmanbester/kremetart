@@ -9,6 +9,7 @@ from kremetart.utils.healpix_dft import (
     dirty_map,
     equatorial_baselines,
     image_frame,
+    image_frame_prerotated,
     make_pixel_grid,
 )
 
@@ -23,7 +24,8 @@ def test_make_pixel_grid_shape_and_unit_norm():
 
 
 def test_make_pixel_grid_nested_matches_healpy():
-    hp = pytest.importorskip("healpy")
+    import healpy as hp
+
     nside = 4
     pix = make_pixel_grid(nside, xp=np)  # nest=True default
     expected = np.stack(hp.pix2vec(nside, np.arange(hp.nside2npix(nside)), nest=True), axis=1)
@@ -83,7 +85,6 @@ def test_dirty_map_recovers_point_source():
 
 def test_equatorial_baselines_matches_itrs_unit_vectors():
     """b_rot . s_icrs equals b_itrs . s_itrs(t) from the tested rephasing machinery."""
-    pytest.importorskip("astropy")
     from kremetart.utils.rephasing import _itrs_unit_vectors
 
     rng = np.random.default_rng(3)
@@ -110,7 +111,6 @@ def test_equatorial_baselines_native_not_implemented():
 
 def test_image_frame_recovers_source_through_ctime():
     """End-to-end: model a source per timestamp with C(t), image it back to the right pixel."""
-    pytest.importorskip("astropy")
     rng = np.random.default_rng(5)
     nside = 16
     pix = make_pixel_grid(nside, xp=np)
@@ -131,3 +131,25 @@ def test_image_frame_recovers_source_through_ctime():
     assert dmap.shape == (pix.shape[0],)
     assert int(np.argmax(dmap)) == src
     np.testing.assert_allclose(dmap[src], 1.0, atol=1e-12)
+
+
+def test_image_frame_prerotated_matches_image_frame():
+    """The device-pure core equals the full image_frame (which now wraps it)."""
+    from kremetart.utils.healpix_dft import equatorial_baselines, image_frame
+
+    rng = np.random.default_rng(7)
+    nside = 8
+    pix = make_pixel_grid(nside, xp=np)
+    itrs_bl = rng.standard_normal((15, 3)) * 3.0
+    times = np.array([1.6e9, 1.6e9 + 60.0])
+    freqs = np.array([1.575e9])
+    nbl = itrs_bl.shape[0]
+    vis = rng.standard_normal((2, nbl, 1)) + 1j * rng.standard_normal((2, nbl, 1))
+    wgt = np.ones((2, nbl, 1))
+
+    ref = image_frame(vis, wgt, times, itrs_bl, pix, freqs, xp=np)
+    b_rot = equatorial_baselines(itrs_bl, times, xp=np)
+    got = image_frame_prerotated(vis, wgt, b_rot, pix, freqs, xp=np)
+
+    assert got.shape == (pix.shape[0],)
+    np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-12)

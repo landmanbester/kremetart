@@ -3,7 +3,8 @@
 The TART catalogue API returns, for a site ``(lon, lat)`` and a UTC datestr, the list of
 sources above an elevation cutoff, each a dict with ``name``/``az``/``el``/``jy``/``r``.
 :func:`satellite_tracks` queries it once per smoovie frame (one per sub-integration, in the
-same order as :func:`kremetart.core.smoovie.frame_dirty_maps`), converts each ``(az, el)`` to
+same order as the prepared imaging zarr; see :func:`kremetart.utils.read_tart_hdf.prepare_msv4_zarr`),
+converts each ``(az, el)`` to
 ICRS ``(ra, dec)`` at that timestamp, and groups the results by satellite name so the renderer
 can draw a per-satellite track.
 
@@ -16,6 +17,9 @@ from __future__ import annotations
 import datetime
 
 import numpy as np
+
+from kremetart.utils import partition_datatree
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 
 def _tart_api_fetch(lon, lat, datestr, elevation_deg):
@@ -47,7 +51,7 @@ def _tart_api_fetch(lon, lat, datestr, elevation_deg):
 
 
 def _frame_times_and_site(hdf_paths):
-    """Per-frame unix timestamps and the shared site, in frame_dirty_maps order.
+    """Per-frame unix timestamps and the shared site, in smoovie frame order.
 
     Returns:
         ``(times_unix, lat_deg, lon_deg, alt_m)`` where ``times_unix`` is a ``(n_frame,)`` array
@@ -56,13 +60,11 @@ def _frame_times_and_site(hdf_paths):
     Raises:
         ValueError: if ``hdf_paths`` is empty.
     """
-    from kremetart.core.smoovie import _partition
-    from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
     times_unix: list[float] = []
     info = None
     for path in hdf_paths:
-        main = _partition(read_hdf_as_msv4(path)).ds
+        main = partition_datatree(read_hdf_as_msv4(path)).ds
         times_unix.extend(float(t) for t in np.asarray(main.time.values))
         if info is None:
             info = main.attrs["observation_info"]
@@ -172,11 +174,11 @@ def _save_catalog_cache(path, datestrs, times_unix, per_frame, lat, lon, elevati
 def satellite_tracks(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_path=None, nframes=None):
     """Per-satellite ICRS tracks aligned 1:1 with the smoovie frame sequence.
 
-    Iterates the same ordering as :func:`kremetart.core.smoovie.frame_dirty_maps`, so the global
+    Iterates the same ordering as :func:`kremetart.core.smoovie.image_via_app`, so the global
     frame index produced here matches the dirty-map index exactly.
 
     Args:
-        hdf_paths: ordered iterable of TART HDF paths (same order as ``frame_dirty_maps``).
+        hdf_paths: ordered iterable of TART HDF paths (same order as the imaged frames).
         elevation_deg: elevation cutoff (deg) for catalogue sources.
         fetch: ``callable(lon, lat, datestr, elevation_deg) -> list[dict]``; injectable so tests
             avoid the network. Defaults to :func:`_tart_api_fetch`.

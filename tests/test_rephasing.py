@@ -11,21 +11,13 @@ exact tangent-plane ENU->ECEF transform -- a ~0.3% baseline-length convention di
 rephasing error.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
+import xarray as xr
 
-xr = pytest.importorskip("xarray")
-pytest.importorskip("xarray_ms")  # registers the "xarray-ms:msv2" engine
-pytest.importorskip("astropy")
-
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4  # noqa: E402  (after importorskip)
-from kremetart.utils.rephasing import midpoint_zenith, rephase_to_dir  # noqa: E402
-
-_DATA = Path(__file__).parent / "data"
-_HDF = _DATA / "vis_2026-06-09_08_11_43.476804.hdf"
-_MS_NOCAL = _DATA / "vis_2026-06-09_08_11_43.476804_nocal.ms"
+from kremetart.utils import partition_datatree
+from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from kremetart.utils.rephasing import common_phase_direction, midpoint_zenith, rephase_to_dir
 
 
 def _single_partition(dt: "xr.DataTree") -> "xr.DataTree":
@@ -35,23 +27,19 @@ def _single_partition(dt: "xr.DataTree") -> "xr.DataTree":
 
 
 @pytest.fixture(scope="module")
-def reference() -> "xr.DataTree":
-    if not _MS_NOCAL.exists():
-        pytest.skip(f"reference nocal MS not present: {_MS_NOCAL}")
-    return _single_partition(xr.open_datatree(str(_MS_NOCAL), engine="xarray-ms:msv2"))
+def reference(ref_ms_nocal) -> "xr.DataTree":
+    return _single_partition(xr.open_datatree(str(ref_ms_nocal), engine="xarray-ms:msv2"))
 
 
 @pytest.fixture(scope="module")
-def rephased() -> "xr.DataTree":
-    if not _HDF.exists():
-        pytest.skip(f"test HDF not present: {_HDF}")
-    dt = read_hdf_as_msv4(_HDF)
+def rephased(ref_hdf) -> "xr.DataTree":
+    dt = read_hdf_as_msv4(ref_hdf)
     return _single_partition(rephase_to_dir(dt, midpoint_zenith(dt)))
 
 
-def test_midpoint_zenith_matches_reference_phase_centre(reference) -> None:
+def test_midpoint_zenith_matches_reference_phase_centre(ref_hdf, reference) -> None:
     """The obs-midpoint zenith equals the reference Measurement Set phase centre."""
-    dt = read_hdf_as_msv4(_HDF)
+    dt = read_hdf_as_msv4(ref_hdf)
     ra, dec = midpoint_zenith(dt)
     ref_dir = reference["field_and_source_base_xds"].to_dataset(inherit=False)
     ref_radec = ref_dir.FIELD_PHASE_CENTER_DIRECTION.values[0]
@@ -88,11 +76,11 @@ def test_field_node_is_celestial_after_rephase(rephased) -> None:
     assert rephased.ds.UVW.attrs["frame"] == "fk5"
 
 
-def test_itrs_baselines_public_helper() -> None:
+def test_itrs_baselines_public_helper(ref_hdf) -> None:
     """The public itrs_baselines equals pos[ant1] - pos[ant2] in the partition's baseline order."""
     from kremetart.utils.rephasing import itrs_baselines
 
-    node = _single_partition(read_hdf_as_msv4(_HDF))
+    node = _single_partition(read_hdf_as_msv4(ref_hdf))
     bl = np.asarray(itrs_baselines(node, np))
     ant = node["antenna_xds"].to_dataset(inherit=False)
     pos = ant.ANTENNA_POSITION.values
@@ -103,14 +91,31 @@ def test_itrs_baselines_public_helper() -> None:
     np.testing.assert_allclose(bl, pos[a1] - pos[a2])
 
 
-def test_rephase_is_identity_at_midpoint_frame(rephased) -> None:
+def test_rephase_is_identity_at_midpoint_frame(ref_hdf, rephased) -> None:
     """At the midpoint frame the new centre equals the instantaneous zenith, so no rotation.
 
     Guards the phase-sign / direction-cosine convention: a sign error would still pass the
     aggregate visibility test if the reference shared it, but would show a non-zero rotation here.
     """
-    raw = read_hdf_as_msv4(_HDF)
+    raw = read_hdf_as_msv4(ref_hdf)
     raw_vis = _single_partition(raw).ds.VISIBILITY.values
     mid = raw_vis.shape[0] // 2
     ratio = rephased.ds.VISIBILITY.values[mid] / raw_vis[mid]
     np.testing.assert_allclose(ratio, 1.0 + 0.0j, atol=1e-6)
+
+
+def test_common_phase_direction_dec_matches_latitude(hdf_paths):
+    ra, dec = common_phase_direction(hdf_paths)
+    info = partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds.attrs["observation_info"]
+    lat = info["site_latitude_deg"]
+    # The declination of the local zenith equals the observer's geodetic latitude, up to the
+    # geodetic-vs-geocentric difference (~0.2 deg). Independent physical check, not a re-derivation.
+    assert abs(dec - lat) < 0.3
+    assert 0.0 <= ra < 360.0
+    # Deterministic.
+    assert (ra, dec) == common_phase_direction(hdf_paths)
+
+
+def test_common_phase_direction_empty_raises():
+    with pytest.raises(ValueError, match="no HDF files"):
+        common_phase_direction([])

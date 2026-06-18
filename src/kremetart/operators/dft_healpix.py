@@ -1,35 +1,32 @@
 """Holoscan operator: full-sky HEALPix dirty-map imager (GPU-resident, xp=cupy).
 
-Thin wrapper around :func:`kremetart.utils.healpix_dft.image_frame`. Receives unstopped residual
-visibilities in the raw-visibility layout plus their timestamps, forms the per-frame equatorial
-baseline rotation C(t) on the host, and images onto a fixed full-sky equatorial HEALPix grid.
+Pure cupy: consumes the per-frame equatorial-rotated baselines ``b_rot(t)`` precomputed by the host
+prepare-step (:mod:`kremetart.core.smoovie_prepare`), so there is no astropy round-trip inside
+``compute()``. Thin wrapper around :func:`kremetart.utils.healpix_dft.image_frame_prerotated`; images
+onto a fixed full-sky equatorial HEALPix grid built once on the device.
 """
 
 import cupy as cp
 import holoscan as hs
 from holoscan.core import Operator, OperatorSpec
 
-from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
+from kremetart.utils.healpix_dft import image_frame_prerotated, make_pixel_grid
 
 
 class HealpixDFTOperator(Operator):
-    """Adjoint (dirty-map) HEALPix DFT imager.
+    """Adjoint (dirty-map) HEALPix DFT imager, pure cupy.
 
     Args:
         fragment: Holoscan fragment.
         nside: HEALPix resolution.
-        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (constant for the array).
         freqs: ``(nchan,)`` frequencies in Hz.
-        nest: NESTED HEALPix ordering (default True).
-        ctime_backend: ``C(t)`` backend ("astropy" now, "native" later).
+        nest: NESTED HEALPix ordering (default True; index locality for the streaming detector).
     """
 
-    def __init__(self, fragment, nside, itrs_baselines, freqs, *args, nest=True, ctime_backend="astropy", **kwargs):
+    def __init__(self, fragment, nside, freqs, *args, nest=True, **kwargs):
         self.nside = nside
-        self.itrs_baselines = cp.asnumpy(itrs_baselines)  # host; rotation runs on host per frame
         self.freqs = cp.asarray(freqs)
         self.nest = nest
-        self.ctime_backend = ctime_backend
         super().__init__(fragment, *args, **kwargs)
 
     def start(self):
@@ -39,31 +36,19 @@ class HealpixDFTOperator(Operator):
     def setup(self, spec: OperatorSpec):
         spec.input("VISIBILITY")
         spec.input("WEIGHT")
+        spec.input("B_ROT")
         spec.input("time")
         spec.output("cube")
         spec.output("time_out")
-        spec.output("freq_out")
 
     def compute(self, op_input, op_output, context):
-        vis = cp.asarray(op_input.receive("VISIBILITY"))  # (n_time, nbl, nchan)
-        wgt = cp.asarray(op_input.receive("WEIGHT"))  # (n_time, nbl, nchan)
-        times = cp.asarray(op_input.receive("time"))  # (n_time,)
+        vis = cp.asarray(op_input.receive("VISIBILITY"))  # (1, nbl, nchan)
+        wgt = cp.asarray(op_input.receive("WEIGHT"))  # (1, nbl, nchan)
+        b_rot = cp.asarray(op_input.receive("B_ROT"))  # (1, nbl, 3)
+        times = cp.asarray(op_input.receive("time"))  # (1,)
 
-        dmap = image_frame(
-            vis,
-            wgt,
-            cp.asnumpy(times),
-            self.itrs_baselines,
-            self.pix_vec,
-            self.freqs,
-            ctime_backend=self.ctime_backend,
-            xp=cp,
-        )
+        dmap = image_frame_prerotated(vis, wgt, b_rot, self.pix_vec, self.freqs, xp=cp)  # (npix,)
 
-        # Output layout: (ncorr=1, ntime_out=1, nfreq_out=1, npix)
-        cube = dmap[None, None, None, :]
-        time_out = cp.mean(times, keepdims=True)
-        freq_out = cp.mean(self.freqs, keepdims=True)
-        op_output.emit(hs.as_tensor(cube), "cube")
-        op_output.emit(hs.as_tensor(time_out), "time_out")
-        op_output.emit(hs.as_tensor(freq_out), "freq_out")
+        # Output layout: (ntime_out=1, npix) -- one dirty-map row per frame.
+        op_output.emit(hs.as_tensor(dmap[None, :]), "cube")
+        op_output.emit(hs.as_tensor(cp.mean(times, keepdims=True)), "time_out")
