@@ -39,7 +39,7 @@ the bundled data is nine ~1-minute snapshots of ~1-second sub-integrations, i.e.
 render the whole sequence at a watchable frame rate:
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/tart.mp4 --nside 64 --fps 12
+uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/tart.mp4 --nside 64 --fps 12 --correct-gains --overlay-catalog
 ```
 
 Rendering dominates the runtime (~0.8 s/frame for the three movies), so the full 540-frame render
@@ -48,7 +48,7 @@ caps the *total* imaged sub-integrations, and only a few seconds of sky barely m
 generous value (e.g. the first ~2 minutes of sky):
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/preview.mp4 --nside 64 --fps 12 --nframes 120
+uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/preview.mp4 --nside 64 --fps 12 --nframes 120 --correct-gains --overlay-catalog
 ```
 
 Either command writes the dirty all-sky movie (`/tmp/tart.mp4`) alongside `*.filtered.mp4` (the IWP
