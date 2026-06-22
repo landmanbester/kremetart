@@ -2,62 +2,58 @@
 
 **K**alman **R**eal-time **E**vidence **M**onitoring **E**xtractor for **TART**.
 
-Holoscan-driven applications to image — and, in time, detect transients in — data from the
+Holoscan-driven applications to image and detect transients in data from the
 [Transient Array Radio Telescope (TART)](https://github.com/tart-telescope). The streaming
-inference machinery is GPU-resident (CuPy + Holoscan); a CUDA GPU is highly recommended.
+inference machinery is GPU-resident (CuPy + Holoscan); a CUDA GPU is currently required.
 
 ## Installation
 
 ```bash
-pip install kremetart          # lightweight: hip-cargo + typer only
 pip install "kremetart[full]"  # full native stack (CuPy/Holoscan, healpy, xarray, tart-tools, …)
 ```
-
-The **lightweight** install is enough to invoke any command: when the heavy native deps are absent,
-the CLI transparently dispatches the command into the project's container image. The **full**
-install runs everything natively.
 
 ## Usage
 
 ```bash
 kremetart --help
+kremetart smoovie --help
 ```
+
+If you have a directory containing pre-downloaded `.hdf` files you should be able to run
+
+```bash
+kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
+```
+
+Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
 
 ## Producing a movie from the test data
 
 The bundled TART snapshots under `tests/data/` are gitignored and fetched on demand from Google
-Drive the first time you run the test suite. Populate them once (set `KREMETART_OFFLINE=1` to skip
-the download):
+Drive the first time you run the test suite. You can download them by cloning the repository and installing the test dependencies:
+
+```bash
+git clone https://github.com/landmanbester/kremetart.git
+cd kremetart
+uv sync --group test
+```
+
+Download the test data with (set `KREMETART_OFFLINE=1` to skip the download):
 
 ```bash
 uv run pytest tests/test_smoovie.py -q
 ```
 
-Then render the snapshots into a HEALPix all-sky movie with `smoovie` (needs a CUDA GPU and
-[`ffmpeg`](https://ffmpeg.org/) on `PATH`). `smoovie` images **one frame per sub-integration** —
-the bundled data is nine ~1-minute snapshots of ~1-second sub-integrations, i.e. **540 frames** — so
+Then render the snapshots into a HEALPix all-sky movie with `smoovie` which images **one frame per sub-integration**. The bundled data consists of nine ~1-minute snapshots of ~1-second sub-integrations, i.e. **540 frames** — so
 render the whole sequence at a watchable frame rate:
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/tart.mp4 --nside 64 --fps 12 --correct-gains --overlay-catalog
+uv run kremetart smoovie --hdf-dir tests/data --output /tmp/test.zarr --nside 64 --correct-gains --overlay-catalog --catalog-cache tests/data/catalog.zarr --open-browser
 ```
 
-Rendering dominates the runtime (~0.8 s/frame for the three movies), so the full 540-frame render
-takes a few minutes. For a quick look, cap the number of frames with `--nframes` — but note this
-caps the *total* imaged sub-integrations, and only a few seconds of sky barely moves, so use a
-generous value (e.g. the first ~2 minutes of sky):
+Browser should open automatically, browse to `http://localhost:8080/` if not.
 
-```bash
-uv run kremetart smoovie --hdf-dir tests/data --movie /tmp/preview.mp4 --nside 64 --fps 12 --nframes 120 --correct-gains --overlay-catalog
-```
-
-Either command writes the dirty all-sky movie (`/tmp/tart.mp4`) alongside `*.filtered.mp4` (the IWP
-filtered flux), `*.znorm.mp4` (the normalised innovation), and a durable `*.zarr` holding the
-`dirty`/`filtered`/`znorm` `(TIME, PIX)` maps. `smoovie` refuses to overwrite an existing
-`<movie>.zarr` — pass `--overwrite` to replace it. It works on any directory of TART `*.hdf`
-snapshots; see `kremetart smoovie --help` for all options.
-
-## Running in a container (GPU)
+## Running in a container (Not yet ready!)
 
 If you'd rather not install the full native stack, run any command straight from the published
 image. The imaging pipeline is GPU-resident (CuPy + Holoscan) with no CPU fallback, so the
