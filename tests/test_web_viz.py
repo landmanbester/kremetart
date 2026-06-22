@@ -85,6 +85,7 @@ def test_geometry_message_shape():
     assert msg["order"] == "NESTED"
     assert msg["npix"] == npix
     assert len(msg["corners"]) == npix * 4 * 3  # (npix,4,3) flattened
+    assert all(isinstance(v, float) for v in msg["corners"][:6])  # native floats for JSON, not numpy scalars
 
 
 def test_frame_header_is_static_template():
@@ -104,3 +105,5 @@ def test_tracks_payload_converts_radec_to_unit_vectors():
     expected = hp.ang2vec(10.0, -20.0, lonlat=True)
     assert np.allclose([x, y, z], expected, atol=1e-6)
     assert np.isclose(x * x + y * y + z * z, 1.0, atol=1e-6)  # unit vector
+    assert sat["points"][1]["seq"] == 1
+    assert sat["points"][1]["flux"] == 1.6
