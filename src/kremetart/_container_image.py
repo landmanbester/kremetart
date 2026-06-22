@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/landmanbester/kremetart:latest"
+CONTAINER_IMAGE = "ghcr.io/landmanbester/kremetart:fixcontainer"

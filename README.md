@@ -56,3 +56,36 @@ filtered flux), `*.znorm.mp4` (the normalised innovation), and a durable `*.zarr
 `dirty`/`filtered`/`znorm` `(TIME, PIX)` maps. `smoovie` refuses to overwrite an existing
 `<movie>.zarr` — pass `--overwrite` to replace it. It works on any directory of TART `*.hdf`
 snapshots; see `kremetart smoovie --help` for all options.
+
+## Running in a container (GPU)
+
+If you'd rather not install the full native stack, run any command straight from the published
+image. The imaging pipeline is GPU-resident (CuPy + Holoscan) with no CPU fallback, so the
+container **must** be launched with GPU access. This requires the host to have an NVIDIA GPU, recent
+drivers, and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+installed:
+
+```bash
+mkdir -p out
+docker run --rm --gpus all --ulimit stack=33554432 \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/tests/data:/data:ro" -v "$PWD/out:/out" \
+  ghcr.io/landmanbester/kremetart:0.0.1 \
+  kremetart smoovie --hdf-dir /data --movie /out/tart.mp4 --nside 64 --fps 12 --correct-gains
+```
+
+The non-obvious flags:
+
+- **`--gpus all`** — expose the host GPU(s) to the container; needs the NVIDIA Container Toolkit. The
+  pipeline aborts with *"no CUDA-capable device is detected"* without it.
+- **`--ulimit stack=33554432`** — give threads a 32 MiB stack. Holoscan warns at import and can
+  segfault below this.
+- **`--user … -e HOME=/tmp`** — write outputs as you rather than `root`, and give CuPy/matplotlib a
+  writable directory for their on-disk caches.
+- **`-v …`** — mount the input HDF snapshots read-only and a directory to receive the `.mp4`/`.zarr`.
+
+Swap `:0.0.1` for `:latest` to track `main`. Under Apptainer/Singularity the GPU flag is `--nv`
+instead (`apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:0.0.1 kremetart …`). Add
+`--overlay-catalog` to overlay the TART satellite catalogue on each frame — it needs outbound
+network access to the TART catalogue API, which the default Docker bridge network provides.
