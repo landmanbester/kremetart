@@ -27,7 +27,7 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         if: env.SKIP_CHECKS != 'true'
@@ -84,7 +84,7 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         if: env.SKIP_CHECKS != 'true'
