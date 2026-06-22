@@ -66,9 +66,10 @@ def test_gpu_operators_import():
     from kremetart.operators.dft_healpix import HealpixDFTOperator
     from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
     from kremetart.operators.iwp_kalman import IWPKalmanOperator
+    from kremetart.operators.web_sink import WebStreamSinkOperator
 
     assert HealpixDFTOperator and HealpixZarrReaderOperator and HealpixWriterOperator
-    assert IWPKalmanOperator
+    assert IWPKalmanOperator and WebStreamSinkOperator
 
 
 def test_image_via_app_end_to_end(hdf_paths, tmp_path):
