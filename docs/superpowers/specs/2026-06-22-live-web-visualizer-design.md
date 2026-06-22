@@ -106,9 +106,11 @@ Imports `numpy`/`healpy` at module top (host deps, no GPU, no fastapi).
 ### `src/kremetart/utils/web_server.py` (host, FastAPI/uvicorn)
 
 - `class FrameServer` — wraps the FastAPI app + a `uvicorn.Server` on a daemon thread.
-  Constructed with `(holder, *, nside, nest, names, port, tracks=None, host="0.0.0.0")`.
+  Constructed with `(holder, *, nside, nest, names, port, tracks=None, host="127.0.0.1")`.
   `start()` launches the thread and returns the view URL; `stop()` sets
-  `server.should_exit`.
+  `server.should_exit`. **The default `host` binds localhost-only** (revised from the
+  original `0.0.0.0` after the whole-branch review flagged LAN exposure of the renderer +
+  sky maps); a caller who wants LAN access passes `host="0.0.0.0"` explicitly.
 - FastAPI routes: `GET /` → `static/index.html`; `StaticFiles` mount at `/static`;
   `WS /stream` → handler that (1) sends `geometry` per name, (2) sends `tracks` if present,
   (3) loops: poll holder, send advanced frames as `frame` header + binary pairs, until
