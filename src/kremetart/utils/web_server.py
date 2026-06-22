@@ -26,7 +26,15 @@ from kremetart.utils.healpix_viz import (
 )
 
 
-async def stream_handler(websocket, holder, geom_msgs, headers, tracks_msg, *, poll: float = 0.03) -> None:
+async def stream_handler(
+    websocket: WebSocket,
+    holder: LatestFrameHolder,
+    geom_msgs: list[dict],
+    headers: dict[str, dict],
+    tracks_msg: dict | None,
+    *,
+    poll: float = 0.03,
+) -> None:
     """Drive one /stream connection through the geometry → frames → end lifecycle."""
     await websocket.accept()
     for msg in geom_msgs:
@@ -70,7 +78,7 @@ class FrameServer:
         self.names = tuple(names)
         self.port = port
         self.host = host
-        self._tracks_msg = tracks_payload(tracks) if tracks else None
+        self._tracks_msg = tracks_payload(tracks) if tracks is not None else None
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
 
