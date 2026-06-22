@@ -1,3 +1,5 @@
+import asyncio
+import json
 import threading
 
 import healpy as hp
@@ -107,3 +109,89 @@ def test_tracks_payload_converts_radec_to_unit_vectors():
     assert np.isclose(x * x + y * y + z * z, 1.0, atol=1e-6)  # unit vector
     assert sat["points"][1]["seq"] == 1
     assert sat["points"][1]["flux"] == 1.6
+
+
+# ---------------------------------------------------------------------------
+# Task 3: stream_handler + FrameServer tests
+# ---------------------------------------------------------------------------
+
+
+class FakeWebSocket:
+    """Records the ordered (kind, payload) of accept/send/close for handler assertions."""
+
+    def __init__(self):
+        self.log: list[tuple[str, object]] = []
+
+    async def accept(self):
+        self.log.append(("accept", None))
+
+    async def send_text(self, text):
+        self.log.append(("text", json.loads(text)))
+
+    async def send_bytes(self, data):
+        self.log.append(("bytes", data))
+
+    async def close(self):
+        self.log.append(("close", None))
+
+
+def test_stream_handler_emits_geometry_frames_then_end():
+    from kremetart.utils.web_server import stream_handler
+
+    names = ("raw", "smooth", "znorm")
+    holder = LatestFrameHolder(names)
+    geom_msgs = [geometry_message(n, 2, nest=True) for n in names]
+    headers = {n: frame_header(n, 2, nest=True) for n in names}
+    # Pre-fill one frame per name, then mark finished (frozen session).
+    for n in names:
+        _vmin, _vmax, data = encode_frame(np.zeros(48, dtype=np.float32), symmetric=(n == "znorm"))
+        holder.put(n, 0, 1.0, _vmin, _vmax, data)
+    holder.finish()
+
+    ws = FakeWebSocket()
+    asyncio.run(stream_handler(ws, holder, geom_msgs, headers, None, poll=0.0))
+
+    kinds = [k for k, _ in ws.log]
+    assert kinds[0] == "accept"
+    # three geometry messages first
+    geo = [p for k, p in ws.log if k == "text" and p.get("type") == "geometry"]
+    assert {g["name"] for g in geo} == set(names)
+    # one header+binary pair per name
+    frames = [p for k, p in ws.log if k == "text" and p.get("type") == "frame"]
+    assert {f["name"] for f in frames} == set(names)
+    assert sum(1 for k, _ in ws.log if k == "bytes") == 3
+    # ends cleanly
+    end = [p for k, p in ws.log if k == "text" and p.get("type") == "end"]
+    assert len(end) == 1
+    assert kinds[-1] == "close"
+    assert kinds.index("close") > kinds.index("accept")
+
+
+def test_stream_handler_sends_tracks_after_geometry():
+    from kremetart.utils.web_server import stream_handler
+
+    names = ("raw",)
+    holder = LatestFrameHolder(names)
+    holder.finish()  # no frames; just geometry + tracks + end
+    geom_msgs = [geometry_message("raw", 2, nest=True)]
+    headers = {"raw": frame_header("raw", 2, nest=True)}
+    tracks_msg = tracks_payload({"SAT": [(0, 1.0, 2.0, 1.0)]})
+
+    ws = FakeWebSocket()
+    asyncio.run(stream_handler(ws, holder, geom_msgs, headers, tracks_msg, poll=0.0))
+
+    texts = [p for k, p in ws.log if k == "text"]
+    types = [p["type"] for p in texts]
+    assert types.index("tracks") == types.index("geometry") + 1  # tracks right after geometry
+    assert types[-1] == "end"
+
+
+def test_frame_server_create_app_has_routes():
+    from kremetart.utils.web_server import FrameServer
+
+    holder = LatestFrameHolder(NAMES)
+    server = FrameServer(holder, nside=2, nest=True, names=NAMES, port=8080)
+    app = server.create_app()
+    paths = {r.path for r in app.routes}
+    assert "/" in paths
+    assert "/stream" in paths
