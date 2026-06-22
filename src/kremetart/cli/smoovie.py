@@ -4,17 +4,17 @@ from typing import Annotated, Literal, NewType
 import typer
 from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
-File = NewType("File", Path)
+Directory = NewType("Directory", Path)
 
 
 @stimela_cab(
     name="smoovie",
-    info="Render a TART HDF sequence into a HEALPix all-sky movie.",
+    info="Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.",
 )
 @stimela_output(
-    dtype="File",
-    name="movie",
-    info="Output mp4 movie",
+    dtype="Directory",
+    name="output",
+    info="Output HEALPix (TIME, PIX) zarr",
 )
 def smoovie(
     hdf_dir: Annotated[
@@ -32,18 +32,6 @@ def smoovie(
             help="HEALPix nside resolution.",
         ),
     ] = 128,
-    fps: Annotated[
-        int,
-        typer.Option(
-            help="Frames per second.",
-        ),
-    ] = 2,
-    cmap: Annotated[
-        str,
-        typer.Option(
-            help="Matplotlib colormap.",
-        ),
-    ] = "inferno",
     phase_ra_deg: Annotated[
         float | None,
         typer.Option(
@@ -65,7 +53,7 @@ def smoovie(
     overlay_catalog: Annotated[
         bool,
         typer.Option(
-            help="Overlay TART catalog satellite tracks on each frame (requires network).",
+            help="Overlay TART catalog satellite tracks on the live sphere (requires network).",
         ),
     ] = False,
     catalog_elevation_deg: Annotated[
@@ -77,7 +65,7 @@ def smoovie(
     catalog_cache: Annotated[
         str | None,
         typer.Option(
-            help="Catalog cache zarr path; defaults to <movie>.catalog.zarr.",
+            help="Catalog cache zarr path; defaults to <output>.catalog.zarr.",
         ),
     ] = None,
     profile: Annotated[
@@ -101,20 +89,38 @@ def smoovie(
     overwrite: Annotated[
         bool,
         typer.Option(
-            help="Overwrite the output <movie>.zarr if it already exists.",
+            help="Overwrite the output zarr if it already exists.",
         ),
     ] = False,
     nframes: Annotated[
         int | None,
         typer.Option(
-            help="Cap the number of frames imaged/rendered (profiling/preview aid).",
+            help="Cap the number of frames imaged (profiling/preview aid).",
         ),
     ] = None,
-    movie: Annotated[
-        File | None,
+    serve: Annotated[
+        bool,
+        typer.Option(
+            help="Serve the live web viewer (use --no-serve for headless/batch runs).",
+        ),
+    ] = True,
+    port: Annotated[
+        int,
+        typer.Option(
+            help="Port for the live web viewer.",
+        ),
+    ] = 8080,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            help="Open the live web viewer in a browser on startup.",
+        ),
+    ] = False,
+    output: Annotated[
+        Directory | None,
         typer.Option(
             parser=parse_upath,
-            help="Output mp4 movie",
+            help="Output HEALPix (TIME, PIX) zarr",
         ),
     ] = None,
     backend: Annotated[
@@ -137,7 +143,7 @@ def smoovie(
     ] = False,
 ):
     """
-    Render a TART HDF sequence into a HEALPix all-sky movie.
+    Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
     """
     if backend == "native" or backend == "auto":
         try:
@@ -149,8 +155,6 @@ def smoovie(
                 dict(
                     hdf_dir=hdf_dir,
                     nside=nside,
-                    fps=fps,
-                    cmap=cmap,
                     phase_ra_deg=phase_ra_deg,
                     phase_dec_deg=phase_dec_deg,
                     correct_gains=correct_gains,
@@ -162,7 +166,10 @@ def smoovie(
                     iwp_noise=iwp_noise,
                     overwrite=overwrite,
                     nframes=nframes,
-                    movie=movie,
+                    serve=serve,
+                    port=port,
+                    open_browser=open_browser,
+                    output=output,
                 ),
             )
 
@@ -173,8 +180,6 @@ def smoovie(
             smoovie_core(
                 hdf_dir=hdf_dir,
                 nside=nside,
-                fps=fps,
-                cmap=cmap,
                 phase_ra_deg=phase_ra_deg,
                 phase_dec_deg=phase_dec_deg,
                 correct_gains=correct_gains,
@@ -186,7 +191,10 @@ def smoovie(
                 iwp_noise=iwp_noise,
                 overwrite=overwrite,
                 nframes=nframes,
-                movie=movie,
+                serve=serve,
+                port=port,
+                open_browser=open_browser,
+                output=output,
             )
             return
         except ImportError:
@@ -206,8 +214,6 @@ def smoovie(
         dict(
             hdf_dir=hdf_dir,
             nside=nside,
-            fps=fps,
-            cmap=cmap,
             phase_ra_deg=phase_ra_deg,
             phase_dec_deg=phase_dec_deg,
             correct_gains=correct_gains,
@@ -219,7 +225,10 @@ def smoovie(
             iwp_noise=iwp_noise,
             overwrite=overwrite,
             nframes=nframes,
-            movie=movie,
+            serve=serve,
+            port=port,
+            open_browser=open_browser,
+            output=output,
         ),
         image=image,
         backend=backend,

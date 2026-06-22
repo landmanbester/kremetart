@@ -4,7 +4,7 @@ cabs:
     command: kremetart.core.smoovie.smoovie
     name: smoovie
     info:
-      Render a TART HDF sequence into a HEALPix all-sky movie.
+      Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
     image: ghcr.io/landmanbester/kremetart:livestreamer
     inputs:
       hdf-dir:
@@ -17,15 +17,6 @@ cabs:
           HEALPix nside resolution.
         dtype: int
         default: 128
-      fps:
-        info:
-          Frames per second.
-        dtype: int
-        default: 2
-      cmap:
-        info:
-          Matplotlib colormap.
-        default: inferno
       phase-ra-deg:
         info:
           Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.
@@ -41,7 +32,7 @@ cabs:
         default: false
       overlay-catalog:
         info:
-          Overlay TART catalog satellite tracks on each frame (requires network).
+          Overlay TART catalog satellite tracks on the live sphere (requires network).
         dtype: bool
         default: false
       catalog-elevation-deg:
@@ -51,7 +42,7 @@ cabs:
         default: 45.0
       catalog-cache:
         info:
-          Catalog cache zarr path; defaults to <movie>.catalog.zarr.
+          Catalog cache zarr path; defaults to <output>.catalog.zarr.
         dtype: Optional[str]
       profile:
         info:
@@ -70,15 +61,30 @@ cabs:
         default: 0.01
       overwrite:
         info:
-          Overwrite the output <movie>.zarr if it already exists.
+          Overwrite the output zarr if it already exists.
         dtype: bool
         default: false
       nframes:
         info:
-          Cap the number of frames imaged/rendered (profiling/preview aid).
+          Cap the number of frames imaged (profiling/preview aid).
         dtype: Optional[int]
-    outputs:
-      movie:
-        dtype: File
+      serve:
         info:
-          Output mp4 movie
+          Serve the live web viewer (use --no-serve for headless/batch runs).
+        dtype: bool
+        default: true
+      port:
+        info:
+          Port for the live web viewer.
+        dtype: int
+        default: 8080
+      open-browser:
+        info:
+          Open the live web viewer in a browser on startup.
+        dtype: bool
+        default: false
+    outputs:
+      output:
+        dtype: Directory
+        info:
+          Output HEALPix (TIME, PIX) zarr
