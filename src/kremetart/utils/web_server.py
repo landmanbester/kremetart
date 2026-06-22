@@ -71,7 +71,7 @@ async def stream_handler(
 class FrameServer:
     """FastAPI app (renderer + /static + /stream) on a uvicorn daemon thread."""
 
-    def __init__(self, holder: LatestFrameHolder, *, nside, nest, names, port, tracks=None, host="0.0.0.0"):
+    def __init__(self, holder: LatestFrameHolder, *, nside, nest, names, port, tracks=None, host="127.0.0.1"):
         self.holder = holder
         self.nside = nside
         self.nest = nest
@@ -108,7 +108,7 @@ class FrameServer:
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
-        shown = "localhost" if self.host in ("0.0.0.0", "") else self.host
+        shown = "localhost" if self.host in ("0.0.0.0", "127.0.0.1", "") else self.host
         return f"http://{shown}:{self.port}/"
 
     def stop(self) -> None:

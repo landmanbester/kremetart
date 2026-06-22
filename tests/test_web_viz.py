@@ -15,6 +15,7 @@ from kremetart.utils.healpix_viz import (
     geometry_message,
     tracks_payload,
 )
+from kremetart.utils.web_server import FrameServer
 
 
 def test_names_and_symmetric():
@@ -195,3 +196,9 @@ def test_frame_server_create_app_has_routes():
     paths = {r.path for r in app.routes}
     assert "/" in paths
     assert "/stream" in paths
+
+
+def test_frame_server_defaults_to_localhost():
+    holder = LatestFrameHolder(NAMES)
+    server = FrameServer(holder, nside=2, nest=True, names=NAMES, port=8080)
+    assert server.host == "127.0.0.1"  # localhost-only by default; no LAN exposure
