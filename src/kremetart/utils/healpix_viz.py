@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+import healpy as hp
 import numpy as np
 
 NAMES: tuple[str, ...] = ("raw", "smooth", "znorm")
@@ -81,3 +82,50 @@ class LatestFrameHolder:
     def current_seq(self) -> int:
         with self._lock:
             return self._current_seq
+
+
+def _order(nest: bool) -> str:
+    return "NESTED" if nest else "RING"
+
+
+def geometry_message(name: str, nside: int, nest: bool) -> dict:
+    """Per-name pixel-corner geometry, sent once on connect (matches the demo payload)."""
+    npix = hp.nside2npix(nside)
+    vecs = hp.boundaries(nside, np.arange(npix), step=1, nest=nest)  # (npix, 3, 4)
+    corners = np.transpose(vecs, (0, 2, 1)).astype(np.float32)  # (npix, 4, 3)
+    return {
+        "type": "geometry",
+        "name": name,
+        "nside": int(nside),
+        "order": _order(nest),
+        "npix": int(npix),
+        "corners": corners.reshape(-1).tolist(),
+    }
+
+
+def frame_header(name: str, nside: int, nest: bool) -> dict:
+    """Static part of a frame header; the server merges vmin/vmax/seq/t per frame."""
+    return {
+        "type": "frame",
+        "name": name,
+        "nside": int(nside),
+        "order": _order(nest),
+        "npix": int(hp.nside2npix(nside)),
+    }
+
+
+def tracks_payload(tracks: dict[str, list[tuple[int, float, float, float]]]) -> dict:
+    """Convert satellite_tracks output into a one-shot ``tracks`` control message.
+
+    Each (ra_deg, dec_deg) becomes a unit vector via ``hp.ang2vec(..., lonlat=True)`` — the
+    same ICRS frame as the pixel boundaries, so markers land on the imaged sphere directly
+    (no projection/rot needed on a real sphere).
+    """
+    sats = []
+    for name, points in tracks.items():
+        pts = []
+        for seq, ra_deg, dec_deg, flux in points:
+            x, y, z = (float(v) for v in hp.ang2vec(ra_deg, dec_deg, lonlat=True))
+            pts.append({"seq": int(seq), "xyz": [x, y, z], "flux": float(flux)})
+        sats.append({"name": name, "points": pts})
+    return {"type": "tracks", "sats": sats}

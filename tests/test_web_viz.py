@@ -1,5 +1,6 @@
 import threading
 
+import healpy as hp
 import numpy as np
 
 from kremetart.utils.healpix_viz import (
@@ -8,6 +9,9 @@ from kremetart.utils.healpix_viz import (
     FrameSlot,
     LatestFrameHolder,
     encode_frame,
+    frame_header,
+    geometry_message,
+    tracks_payload,
 )
 
 
@@ -70,3 +74,33 @@ def test_holder_is_thread_safe_under_concurrent_puts():
     assert h.snapshot()["raw"] is not None
     expected_max = max(i * 500 + 499 for i in range(4))  # 1999, derived from the worker ranges
     assert h.current_seq == expected_max
+
+
+def test_geometry_message_shape():
+    nside = 2
+    npix = hp.nside2npix(nside)  # 48
+    msg = geometry_message("raw", nside, nest=True)
+    assert msg["type"] == "geometry"
+    assert msg["name"] == "raw"
+    assert msg["order"] == "NESTED"
+    assert msg["npix"] == npix
+    assert len(msg["corners"]) == npix * 4 * 3  # (npix,4,3) flattened
+
+
+def test_frame_header_is_static_template():
+    h = frame_header("znorm", 2, nest=False)
+    assert h == {"type": "frame", "name": "znorm", "order": "RING", "nside": 2, "npix": 48}
+
+
+def test_tracks_payload_converts_radec_to_unit_vectors():
+    tracks = {"SAT-A": [(0, 10.0, -20.0, 1.5), (1, 12.0, -19.0, 1.6)]}
+    payload = tracks_payload(tracks)
+    assert payload["type"] == "tracks"
+    sat = payload["sats"][0]
+    assert sat["name"] == "SAT-A"
+    assert sat["points"][0]["seq"] == 0
+    assert sat["points"][0]["flux"] == 1.5
+    x, y, z = sat["points"][0]["xyz"]
+    expected = hp.ang2vec(10.0, -20.0, lonlat=True)
+    assert np.allclose([x, y, z], expected, atol=1e-6)
+    assert np.isclose(x * x + y * y + z * z, 1.0, atol=1e-6)  # unit vector
