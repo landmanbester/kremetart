@@ -46,7 +46,8 @@ interactive sphere — the three demo outputs mapped to the names `raw` / `smoot
 | Reconnect | Client `onclose` reconnects **only if no clean `end` was received** (clean end = freeze; unexpected drop = retry). |
 | Satellite overlay | Ported to the sphere: `--overlay-catalog` (+ `catalog_*`) computes tracks host-side and the server sends a `tracks` control message; the renderer draws 3D trails + current markers. |
 | znorm coloring | Single sequential ramp (demo behavior) with **symmetric** per-frame `vmin/vmax` (`−max\|·\|..+max\|·\|`) so the innovation reads zero-centered — within the existing protocol, no client redesign. |
-| New deps | `fastapi`, `uvicorn[standard]` added to `[full]`. `matplotlib` dropped from `[full]` if nothing else needs it. |
+| New deps | `fastapi`, `uvicorn[standard]` added to `[full]`. `matplotlib` **stays** in `[full]` — `utils/visualisation.py` still imports it (see below). |
+| Mollweide renderer | The PNG/ffmpeg helpers (`render_frames`, `_overlay_tracks`, `_encode_movie`) have been **moved** to `utils/visualisation.py`, retained dormant for a future Mollweide-rendering sub-command. **Out of scope here** — this work neither uses nor modifies them. |
 | Container serve | `--serve` is a **native** (full-install) feature. Container-dispatched serving would need port-publishing in `run_in_container`; documented as out of scope. |
 
 ## 3. The sink ↔ holder ↔ server boundary
@@ -166,8 +167,13 @@ to public names in the flow wiring (`("cube","raw")`, `("filtered","smooth")`,
   5. If `serve`: `holder.finish()` (→ server emits `end`), print "serving frozen session
      at <url> (Ctrl-C to exit)", block on an interruptible wait, then `server.stop()`.
   6. Return `output`.
-- **Removed**: `render_frames`, `_overlay_tracks`, `_encode_movie`, the matplotlib/ffmpeg
-  imports, the `shutil.which("ffmpeg")` check, and the `diverging`/`cmap`/`fps` render path.
+- **Removed from `core/smoovie.py`**: the matplotlib/ffmpeg imports, the
+  `shutil.which("ffmpeg")` check, and the render/encode orchestration (`movie_specs`,
+  the `render_frames`/`_encode_movie` calls, the `diverging`/`cmap`/`fps` path). The
+  helper *functions themselves* are **not deleted** — they already live in
+  `utils/visualisation.py` (moved there for a future Mollweide sub-command, out of scope).
+  `core/smoovie.py` simply stops importing/calling them; it does **not** import
+  `utils/visualisation.py`.
 
 ### `cli/smoovie.py` and the cab
 
@@ -208,8 +214,8 @@ drag-rotate / scroll-zoom, the inline colormap. Edits:
 
 ## 7. Packaging
 
-- Add `fastapi` and `uvicorn[standard]` to `[project.optional-dependencies].full`. Drop
-  `matplotlib` from `[full]` only after confirming (grep) nothing else imports it.
+- Add `fastapi` and `uvicorn[standard]` to `[project.optional-dependencies].full`. **Keep
+  `matplotlib`** — `utils/visualisation.py` (the parked Mollweide renderer) imports it.
 - Vendor `three.module.min.js` under `src/kremetart/static/vendor/`.
 - Confirm `uv_build` ships non-`.py` files under the package; if not, add the matching
   `[tool.uv.build-backend]` data/include configuration so `static/**` is packaged. The
@@ -252,9 +258,10 @@ the served port; and any change to the imaging, IWP filter, or zarr-writer numer
 | `src/kremetart/operators/web_sink.py` | **New** — `WebStreamSinkOperator` terminal sink → holder. |
 | `src/kremetart/static/index.html` | **New** — renderer (vendored three.js, location-derived WS, `end`/reconnect gate, sat overlay). |
 | `src/kremetart/static/vendor/three.module.min.js` | **New** — vendored three.js. |
-| `src/kremetart/core/smoovie.py` | Fan-out sink + serve orchestration + frozen inspection; remove PNG/ffmpeg path. |
+| `src/kremetart/core/smoovie.py` | Fan-out sink + serve orchestration + frozen inspection; stop importing/calling the PNG/ffmpeg helpers. |
 | `src/kremetart/cli/smoovie.py` | `+serve/port/open_browser`; `movie:File`→`output:Directory`; drop `fps`/`cmap`. |
+| `src/kremetart/utils/visualisation.py` | **Unchanged** — parked Mollweide renderer for a future sub-command (out of scope; keeps `matplotlib` in `[full]`). |
 | `src/kremetart/cabs/smoovie.yml` | Auto-regenerated (pre-commit). |
-| `pyproject.toml` | `+fastapi`, `+uvicorn[standard]` in `[full]`; drop `matplotlib` if unused; package `static/**`. |
+| `pyproject.toml` | `+fastapi`, `+uvicorn[standard]` in `[full]`; keep `matplotlib`; package `static/**`. |
 | `tests/test_structure.py`, `tests/test_roundtrip.py` | Follow the new `smoovie` signature/output. |
 | `tests/test_web_viz.py` | **New** — holder/geometry/tracks/sink/server unit tests. |
