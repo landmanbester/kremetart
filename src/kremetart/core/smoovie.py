@@ -1,42 +1,45 @@
 """
-Render a TART HDF sequence into a HEALPix all-sky movie.
-Starts by concatenating the HDFs into a single MSv4 zarr, then streams it through the GPU Holoscan app.
-The core imaging algorithm is implemented as a GPU Holoscan operator which should completely bypass the CPU.
-Every sub-integration is imaged in a fixed equatorial (ICRS) HEALPix grid with a common phase center.
-Renders Mollweide frames with a fixed colour scale and encodes them to mp4 with ffmpeg.
+Image a TART HDF sequence into HEALPix all-sky maps and stream them to a live web viewer.
 
+Concatenates the HDFs into a single MSv4 zarr (host prepare-step), then streams it through the GPU
+Holoscan app: the HEALPix imager produces a per-sub-integration dirty map; a per-pixel IWP-Kalman
+filter emits the filtered flux and normalised innovation; a writer persists ``dirty``/``filtered``/
+``znorm`` to a durable ``(TIME, npix)`` zarr; and (when serving) a terminal sink fans the three
+named maps out to a FastAPI+uvicorn web layer for a live interactive sphere, freezing for scrub-back
+inspection when the pipeline finishes. The PNG+ffmpeg movie path has been removed (the parked
+Mollweide renderer lives in ``kremetart.utils.visualisation`` for a future sub-command).
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import matplotlib
-import numpy as np
-
-matplotlib.use("Agg")
-import shutil
-import subprocess
 import tempfile
+import threading
+import webbrowser
+from pathlib import Path
 
 import healpy as hp
 import holoscan as hs
-import matplotlib.pyplot as plt
 import xarray as xr
 from holoscan.conditions import CountCondition
 
 from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
 from kremetart.operators.iwp_kalman import IWPKalmanOperator
-from kremetart.utils import unix_to_utc
+from kremetart.operators.web_sink import WebStreamSinkOperator
+from kremetart.utils.healpix_viz import NAMES, LatestFrameHolder
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.rephasing import common_phase_direction
 from kremetart.utils.satellites import satellite_tracks
+from kremetart.utils.web_server import FrameServer
 
 
 class SmooviePipeline(hs.core.Application):
-    """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr."""
+    """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr.
+
+    When ``holder`` is given, a terminal :class:`WebStreamSinkOperator` is added and the ``iwp``
+    outputs fan out to both the writer and the sink (Holoscan broadcasts the shared output ports).
+    """
 
     def __init__(
         self,
@@ -47,6 +50,7 @@ class SmooviePipeline(hs.core.Application):
         nest: bool = True,
         sigma2: float = 1e-3,
         noise: float = 1e-2,
+        holder: LatestFrameHolder | None = None,
         **kwargs,
     ):
         self.prepared_zarr = str(prepared_zarr)
@@ -55,6 +59,7 @@ class SmooviePipeline(hs.core.Application):
         self.nest = nest
         self.sigma2 = sigma2
         self.noise = noise
+        self.holder = holder
         super().__init__(*args, **kwargs)
 
         ds = xr.open_zarr(self.prepared_zarr)
@@ -91,6 +96,13 @@ class SmooviePipeline(hs.core.Application):
             writer,
             {("cube", "cube"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
         )
+        if self.holder is not None:
+            sink = WebStreamSinkOperator(self, name="websink", holder=self.holder)
+            self.add_flow(
+                iwp,
+                sink,
+                {("cube", "raw"), ("filtered", "smooth"), ("znorm", "znorm"), ("time_out", "time_out")},
+            )
 
 
 def image_via_app(
@@ -98,6 +110,7 @@ def image_via_app(
     nside: int,
     *,
     output_zarr,
+    holder: LatestFrameHolder | None = None,
     correct_gains: bool = False,
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
@@ -105,21 +118,20 @@ def image_via_app(
     nest: bool = True,
     iwp_sigma: float = 1e-3,
     iwp_noise: float = 1e-2,
-):
-    """Image the HDF sequence through the GPU Holoscan app; return ``(dirty, filtered, znorm, stamps)``.
+) -> Path:
+    """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
 
-    Runs the host prepare-step into a temp zarr, streams it through :class:`SmooviePipeline` (imager
-    -> per-pixel IWP-Kalman filter -> writer), and writes a DURABLE ``output_zarr`` holding the
-    ``(TIME, PIX)`` ``dirty`` / ``filtered`` / ``znorm`` variables, left in place for inspection.
-    Loads each variable back to host as a list of ``(npix,)`` maps (one per frame, in order) plus a
-    list of UTC stamp strings. This is the single imaging seam :func:`smoovie` drives; the
-    host-wiring tests stub it to exercise orchestration without running the GPU.
+    Runs the host prepare-step into a temp zarr, then streams it through :class:`SmooviePipeline`
+    (imager -> per-pixel IWP-Kalman filter -> writer, plus a web sink when ``holder`` is given).
+    Persists ``dirty``/``filtered``/``znorm`` to ``output_zarr`` (left in place for inspection) and
+    returns its path. Nothing is eager-loaded back to host — the maps stream live and/or remain in
+    the zarr. This is the single imaging seam :func:`smoovie` drives; host-wiring tests stub it.
 
     Args:
         hdf_paths: ordered iterable of TART HDF paths.
         nside: HEALPix resolution.
-        output_zarr: durable output zarr path; the caller is responsible for the fail-fast existence
-            check before calling this function.
+        output_zarr: durable output zarr path; the caller does the fail-fast existence check.
+        holder: optional live-frame holder; when set, frames also stream to the web layer.
         correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
         phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
         nframes: optional cap on the number of frames imaged.
@@ -128,7 +140,7 @@ def image_via_app(
         iwp_noise: measurement-noise variance R.
 
     Returns:
-        ``(dirty, filtered, znorm, stamps)``.
+        The ``output_zarr`` path.
     """
     output = Path(output_zarr)
     with tempfile.TemporaryDirectory() as td:
@@ -145,118 +157,25 @@ def image_via_app(
             nframes=nframes,
         )
 
-        app = SmooviePipeline(prepared, output, nside, nest=nest, sigma2=iwp_sigma, noise=iwp_noise)
+        app = SmooviePipeline(prepared, output, nside, nest=nest, sigma2=iwp_sigma, noise=iwp_noise, holder=holder)
         app.config(str(config))
         app.run()
 
-        ds = xr.open_zarr(str(output), chunks=None)  # eager load
-        dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
-        filtered = np.asarray(ds["filtered"].values)
-        znorm = np.asarray(ds["znorm"].values)
-        times = np.asarray(ds["TIME"].values)
-
-    stamps = [unix_to_utc(t) for t in times]
-    return list(dirty), list(filtered), list(znorm), stamps
+    return output
 
 
-def _overlay_tracks(ax, tracks, frame_index):
-    """Draw each satellite present in ``frame_index``: trailing line, current marker, name label.
-
-    ``tracks`` maps name -> list of ``(frame_index, ra_deg, dec_deg, flux_jy)``. ``ax`` is the active
-    healpy Mollweide projection axes (``plt.gca()`` after ``mollview``); its ``projscatter`` /
-    ``projplot`` / ``projtext`` methods are called directly rather than the module-level ``hp.proj*``
-    wrappers, because each wrapper forces a full ``pylab.draw()`` on every call -- turning an
-    N-satellite overlay into ~N full-figure re-rasterizations per frame (the cause of ~15 s/frame
-    rendering). The axes methods draw nothing until the single ``savefig`` per frame. Coordinates use
-    ``lonlat=True`` (degrees, ``lon == RA``) so the active ``rot`` is applied and the overlay lands in
-    the same projected ICRS frame as the imaged pixels.
-    """
-    for name, points in tracks.items():
-        trail = [(ra, dec) for (f, ra, dec, _jy) in points if f <= frame_index]
-        current = [(ra, dec) for (f, ra, dec, _jy) in points if f == frame_index]
-        if not current:
-            continue  # satellite not above the cutoff in this frame
-        if len(trail) > 1:
-            ax.projplot(
-                [ra for ra, _ in trail],
-                [dec for _, dec in trail],
-                lonlat=True,
-                color="cyan",
-                linewidth=0.7,
-                alpha=0.6,
-            )
-        ra0, dec0 = current[0]
-        ax.projscatter([ra0], [dec0], lonlat=True, color="cyan", marker="x", s=30)
-
-
-def render_frames(
-    maps,
-    timestamps,
-    nside: int,
-    cmap: str,
-    outdir,
-    *,
-    rot: tuple[float, float] | None = None,
-    nest: bool = True,
-    tracks=None,
-    diverging: bool = False,
-):
-    """Render each map as a Mollweide PNG with a fixed colour scale. Returns ordered PNG paths.
-
-    ``rot=(lon, lat)`` (degrees) re-centers every frame on the common phase direction so the observed
-    patch sits stably at the projection center across the movie. ``tracks`` (if given) overlays
-    per-satellite ICRS trajectories (trailing line + current marker + name label) on each frame.
-    """
-
-    outdir = Path(outdir)
-    stacked = np.concatenate([np.asarray(m) for m in maps])
-    if diverging:
-        # Symmetric scale centred on 0 with a diverging cmap (for the normalised innovation z_k).
-        vmax = float(np.percentile(np.abs(stacked), 99.0))
-        vmin, cmap = -vmax, "coolwarm"
-    else:
-        vmin, vmax = (float(v) for v in np.percentile(stacked, [1.0, 99.0]))
-    paths = []
-    for i, (m, ts) in enumerate(zip(maps, timestamps)):
-        hp.mollview(np.asarray(m), nest=nest, title=ts, cmap=cmap, min=vmin, max=vmax, rot=rot)
-        hp.graticule()
-        if tracks:
-            _overlay_tracks(plt.gca(), tracks, i)
-        out = outdir / f"frame_{i:04d}.png"
-        plt.savefig(out, dpi=100)
-        plt.close("all")
-        paths.append(out)
-    return paths
-
-
-def _encode_movie(first_png, fps: int, out) -> None:
-    """Encode the ``frame_%04d.png`` sequence in ``first_png``'s directory to mp4 ``out``."""
-    pattern = str(Path(first_png).parent / "frame_%04d.png")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            str(fps),
-            "-i",
-            pattern,
-            "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-pix_fmt",
-            "yuv420p",
-            str(out),
-        ],
-        check=True,
-        capture_output=True,
-    )
+def _wait_for_interrupt() -> None:
+    """Block until the user interrupts (Ctrl-C), keeping the frozen session served."""
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        pass
 
 
 def smoovie(
     hdf_dir,
-    movie,
+    output,
     nside: int = 128,
-    fps: int = 2,
-    cmap: str = "inferno",
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
     correct_gains: bool = False,
@@ -268,35 +187,36 @@ def smoovie(
     iwp_noise: float = 1e-2,
     overwrite: bool = False,
     nframes: int | None = None,
-):
-    """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
+    serve: bool = True,
+    port: int = 8080,
+    open_browser: bool = False,
+) -> Path:
+    """Image the HDF sequence in ``hdf_dir`` into the durable ``output`` zarr; serve a live view.
 
-    Every sub-integration becomes a frame, all imaged into the common ICRS frame and centered on the
-    shared phase direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local
-    zenith RA/Dec at the global mid-time (:func:`common_phase_direction`); supply both to override
-    (the multi-TART mosaic hook). Supplying only one raises ``ValueError``.
+    Every sub-integration is imaged into a common ICRS HEALPix frame centered on the shared phase
+    direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local zenith
+    RA/Dec at the global mid-time (:func:`common_phase_direction`); supplying only one raises
+    ``ValueError``. Writes ``output`` (a ``(TIME, PIX)`` zarr holding ``dirty``/``filtered``/
+    ``znorm``); raises ``FileExistsError`` if it exists unless ``overwrite=True``.
 
-    Writes a durable ``<movie>.zarr`` holding per-pixel ``dirty``, ``filtered``, and ``znorm``
-    ``(TIME, PIX)`` maps, then renders THREE movies: ``<movie>`` (dirty flux), ``<movie>.filtered.mp4``
-    (IWP-Kalman filtered flux), and ``<movie>.znorm.mp4`` (normalised innovation on a diverging colour
-    scale). Raises ``FileExistsError`` if ``<movie>.zarr`` already exists unless ``overwrite=True``.
+    With ``serve`` (the default), a FastAPI+uvicorn server starts on ``port``, the view URL is
+    printed (and opened if ``open_browser``), frames stream live to an interactive sphere, and when
+    the pipeline finishes the session freezes for scrub-back inspection until interrupted (Ctrl-C).
+    ``--no-serve`` images headlessly (batch / Stimela-cab use). ``overlay_catalog`` (serve only)
+    overlays each catalogue satellite above ``catalog_elevation_deg`` as 3D tracks; it requires
+    network access to the TART catalogue API, cached at ``catalog_cache`` (``None`` ->
+    ``<output>.catalog.zarr``). ``profile`` prints the imaging wall-time; ``nframes`` caps the frames
+    imaged; ``iwp_sigma``/``iwp_noise`` set the per-pixel filter's σ²/R.
 
-    ``correct_gains`` divides the visibilities by the per-antenna gain product (TART's own solution)
-    before imaging. ``overlay_catalog`` overlays each catalogue satellite above ``catalog_elevation_deg``
-    (degrees) as a trailing track + marker + label on every frame; it requires network access to the
-    TART catalogue API. ``catalog_cache`` is the zarr path for the cached catalogue
-    (``None`` -> ``<movie>.catalog.zarr``). ``profile`` prints a per-stage timing summary; ``nframes``
-    caps the frames imaged/rendered (a profiling/preview aid). ``iwp_sigma`` sets the IWP driving
-    variance σ², ``iwp_noise`` sets the measurement-noise variance R, and ``overwrite`` allows
-    replacing an existing ``<movie>.zarr``.
+    Returns:
+        The ``output`` zarr path.
     """
-
-    if hdf_dir is None or movie is None:
-        raise ValueError("hdf_dir and movie are required")
+    if hdf_dir is None or output is None:
+        raise ValueError("hdf_dir and output are required")
     if (phase_ra_deg is None) != (phase_dec_deg is None):
         raise ValueError("phase_ra_deg and phase_dec_deg must be given together (both or neither)")
     hdf_dir = Path(hdf_dir)
-    movie = Path(movie)
+    output = Path(output)
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
     if not hdf_paths:
         raise FileNotFoundError(f"no .hdf files found in {hdf_dir}")
@@ -304,19 +224,32 @@ def smoovie(
     if phase_ra_deg is None:
         phase_ra_deg, phase_dec_deg = common_phase_direction(hdf_paths)
 
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg not found on PATH; required to encode the movie.")
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"{output} already exists; pass overwrite=True to replace it.")
 
-    output_zarr = Path(str(movie) + ".zarr")
-    if output_zarr.exists() and not overwrite:
-        raise FileExistsError(f"{output_zarr} already exists; pass overwrite=True to replace it.")
+    tracks = None
+    if serve and overlay_catalog:
+        cache_path = catalog_cache if catalog_cache is not None else str(output) + ".catalog.zarr"
+        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
-    timings = []
+    holder = None
+    server = None
+    url = None
+    if serve:
+        holder = LatestFrameHolder(NAMES)
+        server = FrameServer(holder, nside=nside, nest=True, names=NAMES, port=port, tracks=tracks)
+        url = server.start()
+        print(f"kremetart live view: {url}")
+        if open_browser:
+            webbrowser.open(url)
+
+    timings: list = []
     with stage_timer("imaging", timings):
-        dirty, filtered, znorm, stamps = image_via_app(
+        image_via_app(
             hdf_paths,
             nside,
-            output_zarr=output_zarr,
+            output_zarr=output,
+            holder=holder,
             correct_gains=correct_gains,
             phase_ra_deg=phase_ra_deg,
             phase_dec_deg=phase_dec_deg,
@@ -325,38 +258,13 @@ def smoovie(
             iwp_noise=iwp_noise,
         )
 
-    tracks = None
-    if overlay_catalog:
-        cache_path = catalog_cache if catalog_cache is not None else str(movie) + ".catalog.zarr"
-        tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
-
-    movie_specs = [
-        (dirty, Path(movie), False),
-        (filtered, Path(str(movie) + ".filtered.mp4"), False),
-        (znorm, Path(str(movie) + ".znorm.mp4"), True),
-    ]
-    with tempfile.TemporaryDirectory() as td:
-        with stage_timer("render", timings):
-            rendered = []
-            for frames, out, diverging in movie_specs:
-                subdir = Path(td) / out.name
-                subdir.mkdir()
-                pngs = render_frames(
-                    frames,
-                    stamps,
-                    nside,
-                    cmap,
-                    subdir,
-                    rot=(phase_ra_deg, phase_dec_deg),
-                    tracks=tracks,
-                    diverging=diverging,
-                )
-                rendered.append((pngs, out))
-        with stage_timer("encode", timings):
-            for pngs, out in rendered:
-                _encode_movie(pngs[0], fps, out)
+    if serve:
+        holder.finish()
+        print(f"pipeline finished — serving frozen session at {url} (Ctrl-C to exit)")
+        _wait_for_interrupt()
+        server.stop()
 
     if profile:
-        print_profile(timings, nframes=len(dirty))
+        print_profile(timings, nframes=nframes)
 
-    return movie
+    return output
