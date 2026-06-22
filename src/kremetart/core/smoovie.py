@@ -264,6 +264,10 @@ def smoovie(
             _wait_for_interrupt()
     finally:
         if serve and server is not None:
+            # Flush a clean end even if imaging raised, so connected clients freeze
+            # (and stop reconnecting) instead of looping against the stopped server.
+            if holder is not None:
+                holder.finish()
             server.stop()
 
     if profile:
