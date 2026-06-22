@@ -46,7 +46,11 @@ async def stream_handler(
     try:
         while True:
             sent_something = False
-            for name, slot in holder.snapshot().items():
+            snapshot = holder.snapshot()
+            # Iterate the advertised names (those we sent geometry for), not the holder's keys,
+            # so a stray/mismatched holder entry can never KeyError on last_sent[name].
+            for name in headers:
+                slot = snapshot.get(name)
                 if slot is not None and slot.seq > last_sent[name]:
                     header = {
                         **headers[name],

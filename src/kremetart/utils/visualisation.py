@@ -7,11 +7,11 @@ import numpy as np
 
 
 def _overlay_tracks(ax, tracks, frame_index):
-    """Draw each satellite present in ``frame_index``: trailing line, current marker, name label.
+    """Draw each satellite present in ``frame_index``: trailing line and current marker.
 
     ``tracks`` maps name -> list of ``(frame_index, ra_deg, dec_deg, flux_jy)``. ``ax`` is the active
     healpy Mollweide projection axes (``plt.gca()`` after ``mollview``); its ``projscatter`` /
-    ``projplot`` / ``projtext`` methods are called directly rather than the module-level ``hp.proj*``
+    ``projplot`` methods are called directly rather than the module-level ``hp.proj*``
     wrappers, because each wrapper forces a full ``pylab.draw()`` on every call -- turning an
     N-satellite overlay into ~N full-figure re-rasterizations per frame (the cause of ~15 s/frame
     rendering). The axes methods draw nothing until the single ``savefig`` per frame. Coordinates use
@@ -52,7 +52,7 @@ def render_frames(
 
     ``rot=(lon, lat)`` (degrees) re-centers every frame on the common phase direction so the observed
     patch sits stably at the projection center across the movie. ``tracks`` (if given) overlays
-    per-satellite ICRS trajectories (trailing line + current marker + name label) on each frame.
+    per-satellite ICRS trajectories (trailing line + current marker) on each frame.
     """
 
     outdir = Path(outdir)
