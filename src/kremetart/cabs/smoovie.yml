@@ -5,7 +5,7 @@ cabs:
     name: smoovie
     info:
       Render a TART HDF sequence into a HEALPix all-sky movie.
-    image: ghcr.io/landmanbester/kremetart:fixcontainer
+    image: ghcr.io/landmanbester/kremetart:latest
     inputs:
       hdf-dir:
         info:
