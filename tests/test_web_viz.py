@@ -29,6 +29,13 @@ def test_encode_frame_symmetric_centers_on_zero():
     assert vmax == 2.0 and vmin == -2.0
 
 
+def test_encode_frame_empty():
+    vmin, vmax, data = encode_frame(np.array([], dtype=np.float32), symmetric=False)
+    assert (vmin, vmax) == (0.0, 0.0) and data == b""
+    vmin, vmax, data = encode_frame(np.array([], dtype=np.float32), symmetric=True)
+    assert (vmin, vmax) == (0.0, 0.0) and data == b""
+
+
 def test_holder_put_and_snapshot_latest_wins():
     h = LatestFrameHolder(NAMES)
     assert h.snapshot() == {"raw": None, "smooth": None, "znorm": None}
@@ -61,4 +68,5 @@ def test_holder_is_thread_safe_under_concurrent_puts():
         t.join()
     # No crash, slot holds a valid FrameSlot, current_seq is the max seen.
     assert h.snapshot()["raw"] is not None
-    assert h.current_seq == 1999
+    expected_max = max(i * 500 + 499 for i in range(4))  # 1999, derived from the worker ranges
+    assert h.current_seq == expected_max
