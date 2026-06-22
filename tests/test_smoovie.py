@@ -164,6 +164,7 @@ def test_smoovie_overlay_passes_tracks_to_server(tmp_path, hdf_dir, sm_stub, mon
         nside=1,
         overlay_catalog=True,
         catalog_elevation_deg=30.0,
+        serve=True,
     )
     assert sm_stub.FrameServer.last["tracks"] == {"SAT": [(0, 1.0, 2.0, 1.0)]}
 
@@ -223,7 +224,7 @@ def test_smoovie_default_catalog_cache_path(tmp_path, hdf_dir, sm_stub, monkeypa
     monkeypatch.setattr(sm_stub, "satellite_tracks", fake_tracks)
 
     output = tmp_path / "out.zarr"
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=output, nside=1, overlay_catalog=True, nframes=3)
+    sm_stub.smoovie(hdf_dir=hdf_dir, output=output, nside=1, overlay_catalog=True, nframes=3, serve=True)
     assert captured["cache_path"] == str(output) + ".catalog.zarr"
     assert captured["nframes"] == 3
 

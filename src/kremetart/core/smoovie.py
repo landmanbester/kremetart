@@ -244,25 +244,27 @@ def smoovie(
             webbrowser.open(url)
 
     timings: list = []
-    with stage_timer("imaging", timings):
-        image_via_app(
-            hdf_paths,
-            nside,
-            output_zarr=output,
-            holder=holder,
-            correct_gains=correct_gains,
-            phase_ra_deg=phase_ra_deg,
-            phase_dec_deg=phase_dec_deg,
-            nframes=nframes,
-            iwp_sigma=iwp_sigma,
-            iwp_noise=iwp_noise,
-        )
-
-    if serve:
-        holder.finish()
-        print(f"pipeline finished — serving frozen session at {url} (Ctrl-C to exit)")
-        _wait_for_interrupt()
-        server.stop()
+    try:
+        with stage_timer("imaging", timings):
+            image_via_app(
+                hdf_paths,
+                nside,
+                output_zarr=output,
+                holder=holder,
+                correct_gains=correct_gains,
+                phase_ra_deg=phase_ra_deg,
+                phase_dec_deg=phase_dec_deg,
+                nframes=nframes,
+                iwp_sigma=iwp_sigma,
+                iwp_noise=iwp_noise,
+            )
+        if serve:
+            holder.finish()
+            print(f"pipeline finished — serving frozen session at {url} (Ctrl-C to exit)")
+            _wait_for_interrupt()
+    finally:
+        if serve and server is not None:
+            server.stop()
 
     if profile:
         print_profile(timings, nframes=nframes)
