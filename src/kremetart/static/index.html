@@ -1,0 +1,328 @@
+<div id="root"></div>
+<script type="importmap">
+{ "imports": {
+  "three": "/static/vendor/three.module.min.js"
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+// ---------------------------------------------------------------------------
+// HEALPix live sphere — multiple named outputs, per-name ring-buffer history,
+// rewind slider, tunable cache. Drag rotates, scroll zooms.
+//   - Each named output keeps its own ring buffer of recent frames.
+//   - The slider indexes the SHARED sequence number, so switching names holds
+//     the moment (compare the same instant across channels).
+//   - Live = pinned to newest. Drag back = freeze on that frame; new frames
+//     still enter the rings and the oldest fall off (sliding window).
+// ---------------------------------------------------------------------------
+
+const WS_PROTO = location.protocol === "https:" ? "wss:" : "ws:";
+const WS_URL = `${WS_PROTO}//${location.host}/stream`;
+const BG = "#0a0e17";
+
+Object.assign(document.body.style, { margin:"0", background:BG, overflow:"hidden",
+  fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace", color:"#cfe0f5" });
+const root = document.getElementById("root");
+
+// ---- layout: canvas + control bar -----------------------------------------
+const stage = document.createElement("div");
+stage.style.cssText = "position:fixed;inset:0;";
+root.appendChild(stage);
+
+const bar = document.createElement("div");
+bar.style.cssText = `position:fixed;left:0;right:0;bottom:0;padding:10px 14px;
+  background:linear-gradient(180deg,rgba(10,14,23,0),rgba(10,14,23,.92));
+  display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:12px;`;
+root.appendChild(bar);
+
+function mkLabel(t){ const s=document.createElement("span"); s.textContent=t;
+  s.style.cssText="letter-spacing:.04em;color:#7fa8d8;"; return s; }
+
+// name selector
+const nameSel = document.createElement("select");
+nameSel.style.cssText="background:#16203200;color:#cfe0f5;border:1px solid #2a3a55;border-radius:6px;padding:4px 8px;font:inherit;";
+// cache size
+const cacheInput = document.createElement("input");
+cacheInput.type="range"; cacheInput.min="10"; cacheInput.max="600"; cacheInput.value="300"; cacheInput.style.width="120px";
+const cacheRead = mkLabel("");
+// time scrubber
+const timeInput = document.createElement("input");
+timeInput.type="range"; timeInput.min="0"; timeInput.max="0"; timeInput.value="0"; timeInput.step="1"; timeInput.style.width="260px";
+const timeRead = mkLabel("");
+// live button
+const liveBtn = document.createElement("button");
+liveBtn.textContent="● LIVE";
+liveBtn.style.cssText="background:#1c2c1c;color:#7CFC9B;border:1px solid #2f5b39;border-radius:6px;padding:4px 10px;font:inherit;cursor:pointer;";
+
+bar.append(mkLabel("output"), nameSel, mkLabel("cache"), cacheInput, cacheRead,
+           mkLabel("time"), timeInput, timeRead, liveBtn);
+
+// ---- three.js scene --------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(BG,1);
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 100);
+let camDist=3.0, rotX=0.4, rotY=0.6;
+function placeCamera(){
+  camera.position.set(
+    camDist*Math.cos(rotX)*Math.sin(rotY),
+    camDist*Math.sin(rotX),
+    camDist*Math.cos(rotX)*Math.cos(rotY));
+  camera.lookAt(0,0,0);
+}
+placeCamera();
+
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(0.999,48,32),
+  new THREE.MeshBasicMaterial({color:0x223049,wireframe:true,transparent:true,opacity:0.25})));
+
+// ---- per-name state --------------------------------------------------------
+// geometry[name] -> {positions, colorAttr, mesh, npix}
+// rings[name]    -> Map<seq, Float32Array>  (insertion-ordered; we prune oldest)
+const geom = {};
+const rings = {};
+let currentName = null;
+let cacheSize = parseInt(cacheInput.value,10);
+let bytesPerFrame = 0;     // for memory estimate
+let liveMode = true;
+let liveSeq = -1;          // newest seq seen on the current name
+let viewSeq = -1;          // seq currently displayed
+let finished = false;          // a clean {"type":"end"} was received → freeze, do not reconnect
+let satTracks = null;          // [{name, points:[{seq,xyz,flux}]}] from the tracks control message
+const overlay = new THREE.Group();   // satellite trails + current markers
+scene.add(overlay);
+
+function rebuildOverlay(seq){
+  // Clear previous overlay objects.
+  while(overlay.children.length){ const o=overlay.children.pop(); o.geometry?.dispose?.(); o.material?.dispose?.(); }
+  if(!satTracks) return;
+  const R=1.01;  // just outside the unit sphere so markers sit on the surface
+  for(const sat of satTracks){
+    const trail=sat.points.filter(p=>p.seq<=seq);
+    if(trail.length>1){
+      const pos=new Float32Array(trail.length*3);
+      trail.forEach((p,i)=>{ pos[i*3]=p.xyz[0]*R; pos[i*3+1]=p.xyz[1]*R; pos[i*3+2]=p.xyz[2]*R; });
+      const g=new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos,3));
+      overlay.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:0x33e0ff, transparent:true, opacity:0.6})));
+    }
+    const cur=sat.points.find(p=>p.seq===seq);
+    if(cur){
+      const g=new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([cur.xyz[0]*R,cur.xyz[1]*R,cur.xyz[2]*R]),3));
+      overlay.add(new THREE.Points(g, new THREE.PointsMaterial({color:0x33e0ff, size:8, sizeAttenuation:false})));
+    }
+  }
+}
+
+function enterFrozen(){
+  finished = true;
+  liveMode = false; setLiveBtn();
+  const hi = newestSeq(currentName);
+  if(hi >= 0){ timeInput.value = String(hi); showSeq(currentName, hi); }  // park at newest cached frame
+  updateSlider();
+  setHud("session ended · frozen (scrub to inspect)");
+}
+
+const tri=[0,1,2,0,2,3];
+function buildMesh(g){
+  const NPIX=g.npix, c=g.corners;
+  const positions=new Float32Array(NPIX*6*3);
+  const colors=new Float32Array(NPIX*6*3);
+  for(let p=0;p<NPIX;p++){ const base=p*12;
+    for(let k=0;k<6;k++){ const corner=tri[k], src=base+corner*3, dst=(p*6+k)*3;
+      positions[dst]=c[src]; positions[dst+1]=c[src+1]; positions[dst+2]=c[src+2]; } }
+  const bg=new THREE.BufferGeometry();
+  bg.setAttribute("position", new THREE.BufferAttribute(positions,3));
+  const colorAttr=new THREE.BufferAttribute(colors,3);
+  bg.setAttribute("color", colorAttr);
+  const mesh=new THREE.Mesh(bg, new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide}));
+  mesh.visible=false;
+  scene.add(mesh);
+  return {positions, colorAttr, mesh, npix:NPIX};
+}
+
+// inferno-ish ramp (swap for a real LUT if you like)
+function colormap(t){ t=Math.max(0,Math.min(1,t));
+  const r=Math.min(1,1.5*t+0.1*Math.sin(3.1*t));
+  const g=Math.max(0,1.1*t*t-0.05);
+  const b=Math.max(0,0.6*Math.sin(Math.PI*t)+0.15*(1-t));
+  return [r,g,b]; }
+
+let lastPaintMs = 0;   // recolor cost, for the HUD readout
+function paint(name, values, vmin, vmax){
+  const G=geom[name]; if(!G) return;
+  const t0=performance.now();
+  const span=(vmax-vmin)||1, arr=G.colorAttr.array, NPIX=G.npix;
+  for(let p=0;p<NPIX;p++){
+    // inline colormap (avoid per-pixel array alloc — matters at Nside 128)
+    let tt=(values[p]-vmin)/span; tt=tt<0?0:tt>1?1:tt;
+    const r=Math.min(1,1.5*tt+0.1*Math.sin(3.1*tt));
+    const g=Math.max(0,1.1*tt*tt-0.05);
+    const b=Math.max(0,0.6*Math.sin(Math.PI*tt)+0.15*(1-tt));
+    const o=p*18;
+    for(let k=0;k<6;k++){ const q=o+k*3; arr[q]=r; arr[q+1]=g; arr[q+2]=b; }
+  }
+  G.colorAttr.needsUpdate=true;
+  lastPaintMs=performance.now()-t0;
+}
+
+// store vmin/vmax alongside frame so rewound frames recolor correctly
+function ringPut(name, seq, values, vmin, vmax){
+  let m=rings[name]; if(!m){ m=new Map(); rings[name]=m; }
+  m.set(seq, {values, vmin, vmax});
+  // prune oldest beyond cacheSize (Map preserves insertion order)
+  while(m.size>cacheSize){ const oldest=m.keys().next().value; m.delete(oldest); }
+}
+
+function frameSeqs(name){ const m=rings[name]; return m?[...m.keys()]:[]; }
+
+function showSeq(name, seq){
+  const m=rings[name]; if(!m) return;
+  const f=m.get(seq); if(!f) return;     // aged out of window
+  paint(name, f.values, f.vmin, f.vmax);
+  viewSeq=seq;
+  rebuildOverlay(seq);
+}
+
+function refreshNames(){
+  const names=Object.keys(geom);
+  const have=new Set([...nameSel.options].map(o=>o.value));
+  for(const n of names) if(!have.has(n)){
+    const o=document.createElement("option"); o.value=n; o.textContent=n; nameSel.appendChild(o);
+  }
+  if(!currentName && names.length){ currentName=names[0]; nameSel.value=currentName; selectName(currentName); }
+}
+
+function selectName(name){
+  for(const n of Object.keys(geom)) if(geom[n]) geom[n].mesh.visible=(n===name);
+  currentName=name;
+  // keep the same time position across names (shared seq axis)
+  updateSlider();
+  const targetSeq = liveMode ? newestSeq(name) : clampToRing(name, viewSeq);
+  if(targetSeq>=0) showSeq(name, targetSeq);
+}
+
+function newestSeq(name){ const s=frameSeqs(name); return s.length?s[s.length-1]:-1; }
+function oldestSeq(name){ const s=frameSeqs(name); return s.length?s[0]:-1; }
+function clampToRing(name, seq){
+  const lo=oldestSeq(name), hi=newestSeq(name);
+  if(hi<0) return -1;
+  return Math.max(lo, Math.min(hi, seq));
+}
+
+function updateSlider(){
+  const name=currentName; if(!name){ return; }
+  const lo=oldestSeq(name), hi=newestSeq(name);
+  if(hi<0){ timeInput.min="0"; timeInput.max="0"; timeRead.textContent="(no frames)"; return; }
+  timeInput.min=String(lo); timeInput.max=String(hi);
+  if(liveMode){ timeInput.value=String(hi); }
+  const cur=parseInt(timeInput.value,10);
+  timeRead.textContent=`seq ${cur} / ${hi}  (window ${lo}–${hi}, ${hi-lo+1} frames)`;
+}
+
+function updateCacheReadout(){
+  const mb=(bytesPerFrame*cacheSize*Object.keys(geom).length)/(1024*1024);
+  cacheRead.textContent=`${cacheSize} frames/name · ~${mb.toFixed(1)} MB total`;
+}
+
+// ---- WebSocket -------------------------------------------------------------
+let pendingHeader=null;
+let frameCount=0, lastFpsT=performance.now(), fps=0, lastLatency=0;
+
+function connect(){
+  const ws=new WebSocket(WS_URL); ws.binaryType="arraybuffer";
+  ws.onmessage=(ev)=>{
+    if(typeof ev.data==="string"){
+      const msg=JSON.parse(ev.data);
+      if(msg.type==="geometry"){
+        if(!geom[msg.name]){ geom[msg.name]=buildMesh(msg);
+          bytesPerFrame=Math.max(bytesPerFrame, msg.npix*4);
+          updateCacheReadout(); }
+        refreshNames();
+      } else if(msg.type==="frame"){ pendingHeader=msg;
+      } else if(msg.type==="tracks"){ satTracks=msg.sats; if(currentName) rebuildOverlay(viewSeq);
+      } else if(msg.type==="end"){ enterFrozen();
+      }
+      return;
+    }
+    if(!pendingHeader) return;
+    const h=pendingHeader; pendingHeader=null;
+    const values=new Float32Array(ev.data);
+    ringPut(h.name, h.seq, values, h.vmin, h.vmax);
+    if(h.name===currentName){
+      liveSeq=Math.max(liveSeq, h.seq);
+      lastLatency=performance.now()/1000 - h.t; // rough; clocks not synced
+      updateSlider();
+      if(liveMode) showSeq(currentName, h.seq);   // else freeze on viewSeq
+    }
+    frameCount++;
+    const now=performance.now();
+    if(now-lastFpsT>1000){ fps=frameCount*1000/(now-lastFpsT); frameCount=0; lastFpsT=now; updateHud(); }
+  };
+  ws.onclose=()=>{ if(finished){ return; }   // clean end → stay frozen, no reconnect
+    setHud("disconnected · retrying…"); setTimeout(connect,1500); };
+  ws.onerror=()=>ws.close();
+}
+
+// ---- controls wiring -------------------------------------------------------
+nameSel.onchange=()=>selectName(nameSel.value);
+cacheInput.oninput=()=>{
+  cacheSize=parseInt(cacheInput.value,10);
+  for(const n of Object.keys(rings)){ const m=rings[n];
+    while(m.size>cacheSize){ m.delete(m.keys().next().value); } }
+  updateCacheReadout(); updateSlider();
+};
+timeInput.oninput=()=>{
+  liveMode=false; setLiveBtn();
+  const seq=parseInt(timeInput.value,10);
+  if(currentName) showSeq(currentName, clampToRing(currentName, seq));
+  const hi=newestSeq(currentName);
+  timeRead.textContent=`seq ${seq} / ${hi}  ⏸ scrubbed`;
+};
+liveBtn.onclick=()=>{ liveMode=true; setLiveBtn();
+  if(currentName){ const hi=newestSeq(currentName); if(hi>=0){ timeInput.value=String(hi); showSeq(currentName,hi); } }
+  updateSlider();
+};
+function setLiveBtn(){
+  liveBtn.style.background = liveMode? "#1c2c1c":"#2c1c1c";
+  liveBtn.style.color = liveMode? "#7CFC9B":"#FCA17C";
+  liveBtn.style.borderColor = liveMode? "#2f5b39":"#5b392f";
+  liveBtn.textContent = liveMode? "● LIVE":"⏸ PAUSED";
+}
+setLiveBtn();
+
+// ---- interaction -----------------------------------------------------------
+let dragging=false,px=0,py=0;
+const el=renderer.domElement;
+el.addEventListener("pointerdown",e=>{dragging=true;px=e.clientX;py=e.clientY;el.setPointerCapture(e.pointerId);});
+el.addEventListener("pointermove",e=>{ if(!dragging)return;
+  rotY-=(e.clientX-px)*0.005; rotX+=(e.clientY-py)*0.005;
+  rotX=Math.max(-1.5,Math.min(1.5,rotX)); px=e.clientX;py=e.clientY; placeCamera(); });
+el.addEventListener("pointerup",()=>dragging=false);
+el.addEventListener("wheel",e=>{ e.preventDefault();
+  camDist*=(1+Math.sign(e.deltaY)*0.08); camDist=Math.max(1.4,Math.min(8,camDist)); placeCamera(); },{passive:false});
+addEventListener("resize",()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); });
+
+// ---- HUD -------------------------------------------------------------------
+const hud=document.createElement("div");
+hud.style.cssText="position:fixed;left:14px;top:12px;font-size:12px;color:#7fa8d8;text-shadow:0 1px 2px #000;pointer-events:none;";
+root.appendChild(hud);
+function setHud(s){ hud.textContent="HEALPix ◐ "+s; }
+function updateHud(){
+  setHud(`${currentName||"—"} · ${fps.toFixed(1)} fps · live seq ${liveSeq}` +
+         (liveMode?"":` · viewing ${viewSeq}`) +
+         ` · recolor ${lastPaintMs.toFixed(1)} ms`);
+}
+
+// ---- render loop -----------------------------------------------------------
+function tick(){ requestAnimationFrame(tick); renderer.render(scene,camera); }
+tick();
+updateCacheReadout();
+connect();
+</script>
