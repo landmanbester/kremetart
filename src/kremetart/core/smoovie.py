@@ -25,6 +25,7 @@ from holoscan.conditions import CountCondition
 from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
 from kremetart.operators.iwp_kalman import IWPKalmanOperator
+from kremetart.operators.tikhonov import TikhonovOperator
 from kremetart.operators.web_sink import WebStreamSinkOperator
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 from kremetart.utils.healpix_viz import NAMES, LatestFrameHolder
@@ -53,6 +54,7 @@ class SmooviePipeline(hs.core.Application):
         noise: float = 1e-2,
         apply_beam: bool = True,
         ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+        eta: float | None = None,
         holder: LatestFrameHolder | None = None,
         **kwargs,
     ):
@@ -64,6 +66,7 @@ class SmooviePipeline(hs.core.Application):
         self.noise = noise
         self.apply_beam = apply_beam
         self.ground_plane_diameter = ground_plane_diameter
+        self.eta = eta
         self.holder = holder
         super().__init__(*args, **kwargs)
 
@@ -90,6 +93,15 @@ class SmooviePipeline(hs.core.Application):
             ground_plane_diameter=self.ground_plane_diameter,
         )
         iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
+
+        regularise = self.eta is not None and self.eta > 0
+        # With the Tikhonov stage the writer keeps the raw dirty AND stores the regularised image
+        # (the thing the IWP filters); otherwise it keeps today's un-regularised schema.
+        writer_specs = (
+            (("cube", "regularised"), ("filtered", "filtered"), ("znorm", "znorm"), ("dirty_raw", "dirty"))
+            if regularise
+            else (("cube", "dirty"), ("filtered", "filtered"), ("znorm", "znorm"))
+        )
         writer = HealpixWriterOperator(
             self,
             self.ntime,
@@ -97,6 +109,7 @@ class SmooviePipeline(hs.core.Application):
             name="writer",
             output_dataset=self.output_zarr,
             out_times=self.out_times,
+            var_specs=writer_specs,
         )
         self.add_flow(
             reader,
@@ -109,7 +122,30 @@ class SmooviePipeline(hs.core.Application):
                 ("time", "time"),
             },
         )
-        self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
+
+        if regularise:
+            tikhonov = TikhonovOperator(
+                self,
+                self.nside,
+                self.freqs,
+                self.eta,
+                name="tikhonov",
+                nest=self.nest,
+                apply_beam=self.apply_beam,
+                ground_plane_diameter=self.ground_plane_diameter,
+            )
+            # Imager dirty is the CG RHS; the reader fans the data that builds the Hessian.
+            self.add_flow(imager, tikhonov, {("cube", "cube"), ("time_out", "time_out")})
+            self.add_flow(
+                reader,
+                tikhonov,
+                {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")},
+            )
+            self.add_flow(tikhonov, iwp, {("cube", "cube"), ("time_out", "time_out")})
+            self.add_flow(tikhonov, writer, {("dirty", "dirty_raw")})
+        else:
+            self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
+
         self.add_flow(
             iwp,
             writer,
@@ -139,6 +175,7 @@ def image_via_app(
     iwp_noise: float = 1e-2,
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+    eta: float | None = None,
 ) -> Path:
     """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
 
@@ -161,6 +198,8 @@ def image_via_app(
         iwp_noise: measurement-noise variance R.
         apply_beam: fold the Airy primary beam into the measurement operator (default True).
         ground_plane_diameter: Airy aperture (ground plane) diameter in metres.
+        eta: if set (>0), insert the Tikhonov stage (regularisation strength as a fraction of Σw);
+            ``None`` leaves the un-regularised imager -> IWP path.
 
     Returns:
         The ``output_zarr`` path.
@@ -189,6 +228,7 @@ def image_via_app(
             noise=iwp_noise,
             apply_beam=apply_beam,
             ground_plane_diameter=ground_plane_diameter,
+            eta=eta,
             holder=holder,
         )
         app.config(str(config))
@@ -220,6 +260,7 @@ def smoovie(
     iwp_noise: float = 1e-2,
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+    eta: float | None = None,
     overwrite: bool = False,
     nframes: int | None = None,
     serve: bool = True,
@@ -243,7 +284,10 @@ def smoovie(
     ``<output>.catalog.zarr``). ``profile`` prints the imaging wall-time; ``nframes`` caps the frames
     imaged; ``iwp_sigma``/``iwp_noise`` set the per-pixel filter's σ²/R. ``apply_beam`` (default on)
     folds the Airy primary beam of a ``ground_plane_diameter``-metre aperture into the measurement
-    operator so the maps are oriented toward the intrinsic sky.
+    operator so the maps are oriented toward the intrinsic sky. ``eta`` (if set >0) inserts a
+    per-frame Tikhonov deconvolution (CG) between the imager and the IWP, regularising the dirty
+    image at strength ``eta·Σw``; the IWP then filters the regularised image and the raw dirty is
+    kept alongside it in the output zarr.
 
     Returns:
         The ``output`` zarr path.
@@ -296,6 +340,7 @@ def smoovie(
                 iwp_noise=iwp_noise,
                 apply_beam=apply_beam,
                 ground_plane_diameter=ground_plane_diameter,
+                eta=eta,
             )
         if serve:
             holder.finish()

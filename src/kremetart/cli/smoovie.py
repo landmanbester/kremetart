@@ -98,6 +98,12 @@ def smoovie(
             help="Airy aperture (ground plane) diameter in metres.",
         ),
     ] = 0.125,
+    eta: Annotated[
+        float | None,
+        typer.Option(
+            help="Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.",
+        ),
+    ] = None,
     overwrite: Annotated[
         bool,
         typer.Option(
@@ -178,6 +184,7 @@ def smoovie(
                     iwp_noise=iwp_noise,
                     apply_beam=apply_beam,
                     ground_plane_diameter=ground_plane_diameter,
+                    eta=eta,
                     overwrite=overwrite,
                     nframes=nframes,
                     serve=serve,
@@ -205,6 +212,7 @@ def smoovie(
                 iwp_noise=iwp_noise,
                 apply_beam=apply_beam,
                 ground_plane_diameter=ground_plane_diameter,
+                eta=eta,
                 overwrite=overwrite,
                 nframes=nframes,
                 serve=serve,
@@ -241,6 +249,7 @@ def smoovie(
             iwp_noise=iwp_noise,
             apply_beam=apply_beam,
             ground_plane_diameter=ground_plane_diameter,
+            eta=eta,
             overwrite=overwrite,
             nframes=nframes,
             serve=serve,

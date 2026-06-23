@@ -69,6 +69,10 @@ cabs:
           Airy aperture (ground plane) diameter in metres.
         dtype: float
         default: 0.125
+      eta:
+        info:
+          Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.
+        dtype: Optional[float]
       overwrite:
         info:
           Overwrite the output zarr if it already exists.

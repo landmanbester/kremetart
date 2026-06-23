@@ -8,6 +8,7 @@ from kremetart.utils.healpix_dft import (
     dft_forward,
     dirty_map,
     equatorial_baselines,
+    hessian_healpix,
     image_frame,
     image_frame_prerotated,
     make_pixel_grid,
@@ -229,3 +230,92 @@ def test_zenith_icrs_vectors_unit_and_points_up():
             AltAz(obstime=Time(t, format="unix", scale="utc"), location=loc)
         )
         assert aa.alt.deg > 89.9
+
+
+def _dense_hessian(matvec, npix):
+    """Materialise H as a dense (npix, npix) matrix by applying matvec to each unit vector."""
+    cols = np.empty((npix, npix))
+    for j in range(npix):
+        e = np.zeros(npix)
+        e[j] = 1.0
+        cols[:, j] = matvec(e)
+    return cols
+
+
+def test_hessian_healpix_is_self_adjoint():
+    """H = B Mᴴ W M B is symmetric over the reals, with and without a beam."""
+    rng = np.random.default_rng(20)
+    pix = make_pixel_grid(4, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 12, 2
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.40e9, 1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    x = rng.standard_normal(npix)
+    y = rng.standard_normal(npix)
+    for beam in (None, rng.random((nchan, npix)) + 0.1):
+        matvec, _ = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+        np.testing.assert_allclose(np.dot(matvec(x), y), np.dot(x, matvec(y)), rtol=1e-9, atol=1e-9)
+
+
+def test_hessian_diagonal_matches_dense():
+    """The closed-form diagonal equals the dense Hessian's diagonal (beam and no-beam)."""
+    rng = np.random.default_rng(21)
+    pix = make_pixel_grid(2, xp=np)  # npix = 48, small enough to densify
+    npix = pix.shape[0]
+    nrow, nchan = 9, 2
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.40e9, 1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    for beam in (None, rng.random((nchan, npix)) + 0.1):
+        matvec, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+        dense = _dense_hessian(matvec, npix)
+        np.testing.assert_allclose(diagonal, np.diag(dense), rtol=1e-9, atol=1e-9)
+        if beam is None:
+            # diag(H)_j = Σ_c Σ_r W[r,c] for every pixel when there is no beam.
+            np.testing.assert_allclose(diagonal, np.full(npix, weights.sum()), rtol=1e-9, atol=1e-9)
+
+
+def test_hessian_diagonal_zero_below_beam_null():
+    """Pixels where the beam is zero have zero Hessian diagonal."""
+    rng = np.random.default_rng(22)
+    pix = make_pixel_grid(4, xp=np)
+    npix = pix.shape[0]
+    baselines = rng.standard_normal((7, 3))
+    freqs = np.array([1.575e9])
+    weights = rng.random((7, 1)) + 0.1
+    beam = rng.random((1, npix)) + 0.1
+    beam[0, [1, 5, 17]] = 0.0
+    _, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+    np.testing.assert_allclose(diagonal[[1, 5, 17]], 0.0, atol=1e-12)
+
+
+def test_cg_solves_tikhonov_system_against_dense():
+    """(H + λI) x = b solved by preconditioned CG matches a dense direct solve."""
+    from kremetart.opt.cg import cg
+
+    rng = np.random.default_rng(23)
+    pix = make_pixel_grid(2, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 11, 1
+    baselines = rng.standard_normal((nrow, nchan + 2)) * 2.0  # (nrow, 3)
+    freqs = np.array([1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    beam = rng.random((nchan, npix)) + 0.2
+    matvec, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+
+    wsum = weights.sum()
+    lam = 0.1 * wsum  # eta = 0.1
+    b = rng.standard_normal(npix)
+
+    dense = _dense_hessian(matvec, npix) + lam * np.eye(npix)
+    x_dense = np.linalg.solve(dense, b)
+    x_cg = cg(
+        lambda v: matvec(v) + lam * v,
+        b,
+        M=lambda r: r / (diagonal + lam),
+        maxiter=500,
+        tol=1e-12,
+        xp=np,
+    )
+    np.testing.assert_allclose(x_cg, x_dense, rtol=1e-6, atol=1e-7)

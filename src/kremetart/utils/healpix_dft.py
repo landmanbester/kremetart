@@ -113,6 +113,55 @@ def dirty_map(vis, weights, baselines, pix_vec, freqs, *, beam=None, xp: ModuleT
     return img.real / weights.sum()
 
 
+def hessian_healpix(baselines, pix_vec, freqs, weights, *, beam=None, xp: ModuleType = np):
+    """Per-frame image-space Hessian ``H = B Mᴴ W M B`` and its diagonal.
+
+    ``H`` is the (un-normalised) normal operator of the beam measurement operator ``R = M diag(B)``:
+    ``H x = Σ_c B[c] ⊙ Re{ M_cᴴ W_c M_c (B[c] ⊙ x) }``, summing channels into one MFS image. It is
+    symmetric positive semi-definite over the reals, so ``H + λI`` is SPD and solvable by CG
+    (:func:`kremetart.opt.cg.cg`). The geometric DFT kernel is built **once** here and reused by the
+    returned ``matvec`` (forward then weighted adjoint), so each CG iteration is two contractions
+    with no kernel rebuild.
+
+    Args:
+        baselines: ``(nrow, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres (one frame).
+        pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
+        freqs: ``(nchan,)`` frequencies in Hz.
+        weights: ``(nrow, nchan)`` gain-corrected weights.
+        beam: optional ``(nchan, npix)`` real primary beam; ``None`` -> identity beam.
+        xp: Array module.
+
+    Returns:
+        ``(matvec, diagonal)`` where ``matvec`` is a callable ``x:(npix,) -> H x`` (real, ``(npix,)``)
+        and ``diagonal`` is the closed-form ``diag(H)_j = Σ_c B[c,j]² · Σ_r W[r,c]`` (``(npix,)``;
+        exact because the kernel has unit modulus), used to build the Jacobi preconditioner.
+    """
+    baselines = xp.asarray(baselines)
+    weights = xp.asarray(weights)
+    kernel = xp.exp(1j * _phase(baselines, pix_vec, freqs, xp))  # (nrow, nchan, npix), built once
+    beam_a = None if beam is None else xp.asarray(beam)  # (nchan, npix)
+    w_sum_c = weights.sum(axis=0)  # (nchan,)
+    npix = pix_vec.shape[0]
+
+    if beam_a is None:
+        diagonal = xp.full(npix, w_sum_c.sum(), dtype=xp.float64)
+    else:
+        diagonal = (beam_a**2 * w_sum_c[:, None]).sum(axis=0)  # (npix,)
+
+    def matvec(x):
+        x = xp.asarray(x)
+        bx = x[None, :] if beam_a is None else beam_a * x[None, :]  # (nchan, npix)
+        vis = xp.einsum("rcj,cj->rc", kernel, bx)  # forward M (nrow, nchan)
+        wv = weights * vis
+        # Mᴴ via conj(kernel): conj(kernel) @ wv == conj(kernel @ conj(wv)); avoids a second kernel.
+        adj = xp.conj(xp.einsum("rcj,rc->cj", kernel, xp.conj(wv)))  # (nchan, npix)
+        if beam_a is not None:
+            adj = beam_a * adj
+        return adj.sum(axis=0).real  # (npix,)
+
+    return matvec, diagonal
+
+
 def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
     """Per-timestamp ICRS->ITRS rotation matrices R(t), shape (n_time, 3, 3) (host, O(n_time)).
 

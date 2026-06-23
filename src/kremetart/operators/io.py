@@ -237,6 +237,7 @@ class HealpixWriterOperator(Operator):
         *args,
         output_dataset: str | None = None,
         out_times: NDArray = None,
+        var_specs: tuple[tuple[str, str], ...] = (("cube", "dirty"), ("filtered", "filtered"), ("znorm", "znorm")),
         **kwargs,
     ):
         self.output_dataset = output_dataset
@@ -244,13 +245,17 @@ class HealpixWriterOperator(Operator):
         self.npix = npix
         self.out_times = out_times if out_times is not None else np.arange(ntime)
         self.pix = np.arange(npix)
+        # var_specs maps (input_port -> stored_variable_name); default is the un-regularised schema.
+        # With the Tikhonov stage it also carries ("regularised") and the raw ("dirty") from two
+        # upstream operators (see kremetart.core.smoovie.SmooviePipeline.compose).
+        self.var_specs = tuple(var_specs)
         super().__init__(fragment, *args, **kwargs)
 
     def start(self):
         # dask scaffold: da.empty allocates no data, only the zarr structure to write regions into.
         data_vars = {
             name: (("TIME", "PIX"), da.empty((self.ntime, self.npix), chunks=(1, self.npix), dtype=np.float32))
-            for name in ("dirty", "filtered", "znorm")
+            for _, name in self.var_specs
         }
         ds = xr.Dataset(
             data_vars=data_vars,
@@ -259,22 +264,18 @@ class HealpixWriterOperator(Operator):
         ds.to_zarr(self.output_dataset, mode="w", compute=True)
 
     def setup(self, spec: OperatorSpec):
-        spec.input("cube")
-        spec.input("filtered")
-        spec.input("znorm")
+        for port, _ in self.var_specs:
+            spec.input(port)
         spec.input("time_out")
 
     def compute(self, op_input, op_output, context):
-        cube = cp.asnumpy(cp.asarray(op_input.receive("cube")))  # (1, npix)
-        filtered = cp.asnumpy(cp.asarray(op_input.receive("filtered")))  # (1, npix)
-        znorm = cp.asnumpy(cp.asarray(op_input.receive("znorm")))  # (1, npix)
         time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
+        data_vars = {
+            name: (("TIME", "PIX"), cp.asnumpy(cp.asarray(op_input.receive(port))).astype(np.float32))
+            for port, name in self.var_specs
+        }
         dso = xr.Dataset(
-            data_vars={
-                "dirty": (("TIME", "PIX"), cube.astype(np.float32)),
-                "filtered": (("TIME", "PIX"), filtered.astype(np.float32)),
-                "znorm": (("TIME", "PIX"), znorm.astype(np.float32)),
-            },
+            data_vars=data_vars,
             coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
         )
         dso.to_zarr(self.output_dataset, region="auto")
