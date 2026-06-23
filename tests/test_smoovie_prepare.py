@@ -26,10 +26,33 @@ def test_prepare_msv4_zarr_schema_and_shapes(tmp_path, hdf_paths):
     assert set(ds["VISIBILITY"].dims) == {"time", "baseline", "frequency"}
     assert set(ds["WEIGHT"].dims) == {"time", "baseline", "frequency"}
     assert set(ds["B_ROT"].dims) == {"time", "baseline", "xyz"}
+    assert set(ds["BORESIGHT"].dims) == {"time", "xyz"}
     assert ds["VISIBILITY"].shape == (n_time, n_bl, 1)
     assert ds["B_ROT"].shape == (n_time, n_bl, 3)
+    assert ds["BORESIGHT"].shape == (n_time, 3)
     assert np.iscomplexobj(ds["VISIBILITY"].values)
     np.testing.assert_allclose(ds.time.values, np.asarray(main.time.values))
+
+
+def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
+    """BORESIGHT equals the instantaneous-zenith ICRS unit vectors and is unit-norm."""
+    import xarray as xr
+
+    from kremetart.utils.healpix_dft import zenith_icrs_vectors
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
+
+    main = partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds
+    times = np.asarray(main.time.values)
+    info = main.attrs["observation_info"]
+    expected = zenith_icrs_vectors(
+        times, info["site_latitude_deg"], info["site_longitude_deg"], info["site_altitude_m"]
+    )
+
+    out = tmp_path / "prepared.zarr"
+    prepare_msv4_zarr(hdf_paths[:1], out)
+    ds = xr.open_zarr(str(out))
+    np.testing.assert_allclose(ds["BORESIGHT"].values, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(ds["BORESIGHT"].values, axis=1), 1.0, atol=1e-12)
 
 
 def test_prepare_msv4_zarr_brot_matches_equatorial_baselines(tmp_path, hdf_paths):

@@ -153,3 +153,79 @@ def test_image_frame_prerotated_matches_image_frame():
 
     assert got.shape == (pix.shape[0],)
     np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-12)
+
+
+def test_forward_adjoint_hermitian_with_beam():
+    """With a real per-channel beam, dft_adjoint is still the exact Hermitian transpose of dft_forward."""
+    rng = np.random.default_rng(11)
+    pix = make_pixel_grid(8, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 10, 3
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.40e9, 1.50e9, 1.575e9])
+    beam = rng.random((nchan, npix)) + 0.1  # real, positive primary beam
+    image = rng.standard_normal(npix) + 1j * rng.standard_normal(npix)
+    data = rng.standard_normal((nrow, nchan)) + 1j * rng.standard_normal((nrow, nchan))
+    lhs = np.vdot(dft_forward(image, baselines, pix, freqs, beam=beam, xp=np), data)
+    rhs = np.vdot(image, dft_adjoint(data, baselines, pix, freqs, beam=beam, xp=np))
+    np.testing.assert_allclose(lhs, rhs, rtol=1e-10, atol=1e-10)
+
+
+def test_dirty_map_with_beam_scales_and_masks():
+    """Beam measurement operator: a point source images to beam**2 at its pixel; beam==0 -> 0."""
+    rng = np.random.default_rng(12)
+    pix = make_pixel_grid(16, xp=np)
+    npix = pix.shape[0]
+    nrow = 300
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.575e9])
+    beam = rng.random((1, npix)) + 0.2  # positive
+    zeroed = np.array([10, 2000, 3000])  # stand-in for below-horizon pixels
+    beam[0, zeroed] = 0.0
+    src = 1234
+    image = np.zeros(npix)
+    image[src] = 1.0
+    vis = dft_forward(image, baselines, pix, freqs, beam=beam, xp=np)
+    weights = np.ones((nrow, 1))
+    dmap = dirty_map(vis, weights, baselines, pix, freqs, beam=beam, xp=np)
+    assert int(np.argmax(dmap)) == src
+    np.testing.assert_allclose(dmap[src], beam[0, src] ** 2, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(dmap[zeroed], 0.0, atol=1e-12)
+
+
+def test_dirty_map_beam_none_matches_no_beam():
+    """beam=None reproduces the no-beam dirty map exactly (regression)."""
+    rng = np.random.default_rng(13)
+    pix = make_pixel_grid(8, xp=np)
+    nrow = 50
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.50e9, 1.575e9])
+    vis = rng.standard_normal((nrow, 2)) + 1j * rng.standard_normal((nrow, 2))
+    weights = rng.random((nrow, 2))
+    a = dirty_map(vis, weights, baselines, pix, freqs, xp=np)
+    b = dirty_map(vis, weights, baselines, pix, freqs, beam=None, xp=np)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_zenith_icrs_vectors_unit_and_points_up():
+    """Boresight vectors are unit-norm and transform back to altitude ~90 deg at the site."""
+    import astropy.units as u
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+
+    from kremetart.utils.healpix_dft import zenith_icrs_vectors
+
+    lat, lon, alt = -23.7, 133.9, 100.0  # MWA-ish southern site
+    times = np.array([1.6e9, 1.6e9 + 1800.0])
+    vecs = zenith_icrs_vectors(times, lat, lon, alt)
+    assert vecs.shape == (2, 3)
+    np.testing.assert_allclose(np.linalg.norm(vecs, axis=1), 1.0, atol=1e-12)
+
+    loc = EarthLocation(lat=lat * u.deg, lon=lon * u.deg, height=alt * u.m)
+    for t, v in zip(times, vecs):
+        dec = np.arcsin(v[2])
+        ra = np.arctan2(v[1], v[0])
+        aa = SkyCoord(ra=ra * u.rad, dec=dec * u.rad, frame="icrs").transform_to(
+            AltAz(obstime=Time(t, format="unix", scale="utc"), location=loc)
+        )
+        assert aa.alt.deg > 89.9

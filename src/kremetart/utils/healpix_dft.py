@@ -50,53 +50,66 @@ def _phase(baselines, pix_vec, freqs, xp):
     return 2.0 * xp.pi * inv_wl[None, :, None] * g[:, None, :]
 
 
-def dft_forward(image, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+def dft_forward(image, baselines, pix_vec, freqs, *, beam=None, xp: ModuleType = np):
     """Image -> visibilities (phasesign +1).
+
+    With ``beam`` given this is the beam measurement operator ``R = A_dft . diag(B)``: the sky is
+    multiplied by the per-channel primary beam before the geometric DFT.
 
     Args:
         image: ``(npix,)`` sky (real in production; complex accepted for the adjoint test).
         baselines: ``(nrow, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
         pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
         freqs: ``(nchan,)`` frequencies in Hz.
+        beam: optional ``(nchan, npix)`` real primary beam (e.g.
+            :func:`kremetart.utils.beam.airy_power_beam`). ``None`` -> no beam (identity).
         xp: Array module.
 
     Returns:
         ``(nrow, nchan)`` complex visibilities.
     """
     kernel = xp.exp(1j * _phase(baselines, pix_vec, freqs, xp))  # (nrow, nchan, npix)
+    if beam is not None:
+        kernel = kernel * xp.asarray(beam)[None, :, :]  # attenuate the sky by the per-channel beam
     return kernel @ xp.asarray(image)  # (nrow, nchan)
 
 
-def dft_adjoint(vis, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+def dft_adjoint(vis, baselines, pix_vec, freqs, *, beam=None, xp: ModuleType = np):
     """Visibilities -> image (phasesign -1); the exact Hermitian transpose of :func:`dft_forward`.
 
     Args:
         vis: ``(nrow, nchan)`` complex visibilities.
-        baselines, pix_vec, freqs, xp: as in :func:`dft_forward`.
+        beam, baselines, pix_vec, freqs, xp: as in :func:`dft_forward`. The same real ``beam`` is
+            applied per channel (before the channel sum), preserving the Hermitian transpose.
 
     Returns:
         ``(npix,)`` complex image (caller takes ``Re`` / normalises; see :func:`dirty_map`).
     """
     kernel = xp.exp(-1j * _phase(baselines, pix_vec, freqs, xp))  # conj of forward
-    return xp.einsum("rcj,rc->j", kernel, xp.asarray(vis))  # (npix,)
+    vis = xp.asarray(vis)
+    if beam is None:
+        return xp.einsum("rcj,rc->j", kernel, vis)  # (npix,)
+    return xp.einsum("rcj,rc,cj->j", kernel, vis, xp.asarray(beam))  # beam per channel before the channel sum
 
 
-def dirty_map(vis, weights, baselines, pix_vec, freqs, *, xp: ModuleType = np):
+def dirty_map(vis, weights, baselines, pix_vec, freqs, *, beam=None, xp: ModuleType = np):
     """Weighted adjoint dirty map: ``Re{ adjoint(weights * vis) } / sum(weights)``.
 
-    Implements the design-doc dirty-map equation directly (equal-area grid: no 1/n factor).
+    Implements the design-doc dirty-map equation directly (equal-area grid: no 1/n factor). With
+    ``beam`` given the per-frame map is the beam-weighted ``B (.) (A_dft^H W vis)`` oriented toward
+    the intrinsic sky (see ``docs/superpowers/specs/2026-06-23-beam-measurement-operator-design.md``).
 
     Args:
         vis: ``(nrow, nchan)`` complex residual visibilities.
         weights: ``(nrow, nchan)`` gain-corrected weights ``w_corr``.
-        baselines, pix_vec, freqs, xp: as in :func:`dft_forward`.
+        beam, baselines, pix_vec, freqs, xp: as in :func:`dft_forward`.
 
     Returns:
         ``(npix,)`` real dirty image.
     """
     vis = xp.asarray(vis)
     weights = xp.asarray(weights)
-    img = dft_adjoint(weights * vis, baselines, pix_vec, freqs, xp=xp)
+    img = dft_adjoint(weights * vis, baselines, pix_vec, freqs, beam=beam, xp=xp)
     return img.real / weights.sum()
 
 
@@ -127,6 +140,35 @@ def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
     return mats
 
 
+def zenith_icrs_vectors(times, lat_deg: float, lon_deg: float, alt_m: float) -> np.ndarray:
+    """Instantaneous-zenith ICRS unit vectors at each timestamp (host, astropy; ``O(n_time)``).
+
+    These are the antenna-boresight directions for the Airy primary beam: the site local zenith
+    (``AltAz`` alt=90 deg) expressed as a unit vector in the same equatorial ICRS frame as
+    :func:`make_pixel_grid`, so that ``pix_vec @ boresight`` is the cosine of each pixel's zenith
+    angle. Precomputed per frame by the host prepare-step and applied on the GPU by the imager,
+    mirroring the ``b_rot`` host/device split.
+
+    Args:
+        times: ``(n_time,)`` unix-second timestamps.
+        lat_deg: site geodetic latitude in degrees.
+        lon_deg: site longitude in degrees.
+        alt_m: site altitude in metres.
+
+    Returns:
+        ``(n_time, 3)`` array of ICRS unit vectors of the site zenith.
+    """
+    import astropy.units as u
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+
+    loc = EarthLocation(lat=lat_deg * u.deg, lon=lon_deg * u.deg, height=alt_m * u.m)
+    tt = Time(np.asarray(times), format="unix", scale="utc")
+    zen = SkyCoord(AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=tt, location=loc)).icrs
+    ra, dec = zen.ra.rad, zen.dec.rad
+    return np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=1)
+
+
 def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp: ModuleType = np):
     """Rotate fixed ITRS baselines into the equatorial frame for each timestamp.
 
@@ -149,7 +191,7 @@ def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp:
     raise ValueError(f"unknown backend {backend!r}")
 
 
-def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, xp: ModuleType = np):
+def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, beam=None, xp: ModuleType = np):
     """Per-frame dirty image from already-rotated baselines (device-pure; no host astropy).
 
     The frame rotation ``C(t)`` has already been folded into ``b_rot``; this is the pure-``xp``
@@ -163,6 +205,7 @@ def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, xp: ModuleTyp
         b_rot: ``(n_time, nbl, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
         pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
         freqs: ``(nchan,)`` frequencies in Hz.
+        beam: optional ``(nchan, npix)`` real primary beam; see :func:`dft_forward`.
         xp: Array module.
 
     Returns:
@@ -176,11 +219,20 @@ def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, xp: ModuleTyp
     rows = b_rot.reshape(n_time * nbl, 3)
     vis_rows = vis.reshape(n_time * nbl, nchan)
     wgt_rows = weights.reshape(n_time * nbl, nchan)
-    return dirty_map(vis_rows, wgt_rows, rows, pix_vec, freqs, xp=xp)
+    return dirty_map(vis_rows, wgt_rows, rows, pix_vec, freqs, beam=beam, xp=xp)
 
 
 def image_frame(
-    vis, weights, times, itrs_baselines, pix_vec, freqs, *, ctime_backend: str = "astropy", xp: ModuleType = np
+    vis,
+    weights,
+    times,
+    itrs_baselines,
+    pix_vec,
+    freqs,
+    *,
+    beam=None,
+    ctime_backend: str = "astropy",
+    xp: ModuleType = np,
 ):
     """Per-frame dirty image from unstopped residual visibilities.
 
@@ -195,6 +247,7 @@ def image_frame(
         itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors.
         pix_vec: ``(npix, 3)`` pixel unit vectors from :func:`make_pixel_grid`.
         freqs: ``(nchan,)`` frequencies in Hz.
+        beam: optional ``(nchan, npix)`` real primary beam; see :func:`dft_forward`.
         ctime_backend: passed to :func:`equatorial_baselines`.
         xp: Array module.
 
@@ -202,4 +255,4 @@ def image_frame(
         ``(npix,)`` real dirty image.
     """
     b_rot = equatorial_baselines(itrs_baselines, times, backend=ctime_backend, xp=xp)  # (n_time, nbl, 3)
-    return image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, xp=xp)
+    return image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, beam=beam, xp=xp)

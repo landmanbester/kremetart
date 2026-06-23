@@ -86,6 +86,18 @@ def smoovie(
             help="Measurement-noise variance (R) for the per-pixel Kalman filter.",
         ),
     ] = 0.01,
+    apply_beam: Annotated[
+        bool,
+        typer.Option(
+            help="Fold the Airy primary beam into the measurement operator (image the intrinsic sky).",
+        ),
+    ] = True,
+    ground_plane_diameter: Annotated[
+        float,
+        typer.Option(
+            help="Airy aperture (ground plane) diameter in metres.",
+        ),
+    ] = 0.125,
     overwrite: Annotated[
         bool,
         typer.Option(
@@ -164,6 +176,8 @@ def smoovie(
                     profile=profile,
                     iwp_sigma=iwp_sigma,
                     iwp_noise=iwp_noise,
+                    apply_beam=apply_beam,
+                    ground_plane_diameter=ground_plane_diameter,
                     overwrite=overwrite,
                     nframes=nframes,
                     serve=serve,
@@ -189,6 +203,8 @@ def smoovie(
                 profile=profile,
                 iwp_sigma=iwp_sigma,
                 iwp_noise=iwp_noise,
+                apply_beam=apply_beam,
+                ground_plane_diameter=ground_plane_diameter,
                 overwrite=overwrite,
                 nframes=nframes,
                 serve=serve,
@@ -223,6 +239,8 @@ def smoovie(
             profile=profile,
             iwp_sigma=iwp_sigma,
             iwp_noise=iwp_noise,
+            apply_beam=apply_beam,
+            ground_plane_diameter=ground_plane_diameter,
             overwrite=overwrite,
             nframes=nframes,
             serve=serve,

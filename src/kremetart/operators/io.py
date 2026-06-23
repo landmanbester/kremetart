@@ -191,6 +191,7 @@ class HealpixZarrReaderOperator(Operator):
         spec.output("VISIBILITY")
         spec.output("WEIGHT")
         spec.output("B_ROT")
+        spec.output("BORESIGHT")
         spec.output("time")
 
     def start(self):
@@ -206,6 +207,7 @@ class HealpixZarrReaderOperator(Operator):
         op_output.emit(hs.as_tensor(cp.asarray(s["VISIBILITY"].values)), "VISIBILITY")
         op_output.emit(hs.as_tensor(cp.asarray(s["WEIGHT"].values)), "WEIGHT")
         op_output.emit(hs.as_tensor(cp.asarray(s["B_ROT"].values)), "B_ROT")
+        op_output.emit(hs.as_tensor(cp.asarray(s["BORESIGHT"].values)), "BORESIGHT")
         op_output.emit(hs.as_tensor(cp.asarray(s["time"].values)), "time")
         self.current_index += 1
 

@@ -12,7 +12,7 @@ from tart_tools import api_handler
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.calibration import correct_file_gains
-from kremetart.utils.healpix_dft import equatorial_baselines
+from kremetart.utils.healpix_dft import equatorial_baselines, zenith_icrs_vectors
 
 
 def read_hdf_as_xr(path, filter_elevation=45):
@@ -481,6 +481,7 @@ def prepare_msv4_zarr(
     vis_all: list[np.ndarray] = []
     wgt_all: list[np.ndarray] = []
     brot_all: list[np.ndarray] = []
+    bore_all: list[np.ndarray] = []
     time_all: list[np.ndarray] = []
     freqs = None
     info = None
@@ -506,9 +507,14 @@ def prepare_msv4_zarr(
         if correct_gains:
             vis, wgt = correct_file_gains(node, vis, wgt, xp=np)
         b_rot = equatorial_baselines(bl, times, xp=np)  # (n_time, nbl, 3)
+        obs = main.attrs["observation_info"]  # site is shared across files; use this file's times
+        boresight = zenith_icrs_vectors(
+            times, obs["site_latitude_deg"], obs["site_longitude_deg"], obs["site_altitude_m"]
+        )  # (n_time, 3) ICRS zenith unit vectors -> Airy beam boresight
         vis_all.append(np.asarray(vis))
         wgt_all.append(np.asarray(wgt))
         brot_all.append(np.asarray(b_rot))
+        bore_all.append(np.asarray(boresight))
         time_all.append(times)
 
     if not vis_all:
@@ -517,15 +523,23 @@ def prepare_msv4_zarr(
     vis_c = np.concatenate(vis_all, axis=0)
     wgt_c = np.concatenate(wgt_all, axis=0)
     brot = np.concatenate(brot_all, axis=0)
+    bore = np.concatenate(bore_all, axis=0)
     tt = np.concatenate(time_all, axis=0)
     if nframes is not None:
-        vis_c, wgt_c, brot, tt = vis_c[:nframes], wgt_c[:nframes], brot[:nframes], tt[:nframes]
+        vis_c, wgt_c, brot, bore, tt = (
+            vis_c[:nframes],
+            wgt_c[:nframes],
+            brot[:nframes],
+            bore[:nframes],
+            tt[:nframes],
+        )
 
     ds = xr.Dataset(
         data_vars={
             "VISIBILITY": (("time", "baseline", "frequency"), vis_c.astype(np.complex64)),
             "WEIGHT": (("time", "baseline", "frequency"), wgt_c.astype(np.float32)),
             "B_ROT": (("time", "baseline", "xyz"), brot.astype(np.float64)),
+            "BORESIGHT": (("time", "xyz"), bore.astype(np.float64)),
         },
         coords={
             "time": ("time", tt.astype(np.float64)),

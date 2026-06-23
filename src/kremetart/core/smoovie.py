@@ -26,6 +26,7 @@ from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
 from kremetart.operators.iwp_kalman import IWPKalmanOperator
 from kremetart.operators.web_sink import WebStreamSinkOperator
+from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 from kremetart.utils.healpix_viz import NAMES, LatestFrameHolder
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
@@ -50,6 +51,8 @@ class SmooviePipeline(hs.core.Application):
         nest: bool = True,
         sigma2: float = 1e-3,
         noise: float = 1e-2,
+        apply_beam: bool = True,
+        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
         holder: LatestFrameHolder | None = None,
         **kwargs,
     ):
@@ -59,6 +62,8 @@ class SmooviePipeline(hs.core.Application):
         self.nest = nest
         self.sigma2 = sigma2
         self.noise = noise
+        self.apply_beam = apply_beam
+        self.ground_plane_diameter = ground_plane_diameter
         self.holder = holder
         super().__init__(*args, **kwargs)
 
@@ -75,7 +80,15 @@ class SmooviePipeline(hs.core.Application):
             name="reader",
             zarr_path=self.prepared_zarr,
         )
-        imager = HealpixDFTOperator(self, self.nside, self.freqs, name="imager", nest=self.nest)
+        imager = HealpixDFTOperator(
+            self,
+            self.nside,
+            self.freqs,
+            name="imager",
+            nest=self.nest,
+            apply_beam=self.apply_beam,
+            ground_plane_diameter=self.ground_plane_diameter,
+        )
         iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
         writer = HealpixWriterOperator(
             self,
@@ -88,7 +101,13 @@ class SmooviePipeline(hs.core.Application):
         self.add_flow(
             reader,
             imager,
-            {("VISIBILITY", "VISIBILITY"), ("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("time", "time")},
+            {
+                ("VISIBILITY", "VISIBILITY"),
+                ("WEIGHT", "WEIGHT"),
+                ("B_ROT", "B_ROT"),
+                ("BORESIGHT", "BORESIGHT"),
+                ("time", "time"),
+            },
         )
         self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
         self.add_flow(
@@ -118,6 +137,8 @@ def image_via_app(
     nest: bool = True,
     iwp_sigma: float = 1e-3,
     iwp_noise: float = 1e-2,
+    apply_beam: bool = True,
+    ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
 ) -> Path:
     """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
 
@@ -138,6 +159,8 @@ def image_via_app(
         nest: NESTED HEALPix ordering (default True).
         iwp_sigma: IWP driving variance sigma^2.
         iwp_noise: measurement-noise variance R.
+        apply_beam: fold the Airy primary beam into the measurement operator (default True).
+        ground_plane_diameter: Airy aperture (ground plane) diameter in metres.
 
     Returns:
         The ``output_zarr`` path.
@@ -157,7 +180,17 @@ def image_via_app(
             nframes=nframes,
         )
 
-        app = SmooviePipeline(prepared, output, nside, nest=nest, sigma2=iwp_sigma, noise=iwp_noise, holder=holder)
+        app = SmooviePipeline(
+            prepared,
+            output,
+            nside,
+            nest=nest,
+            sigma2=iwp_sigma,
+            noise=iwp_noise,
+            apply_beam=apply_beam,
+            ground_plane_diameter=ground_plane_diameter,
+            holder=holder,
+        )
         app.config(str(config))
         app.run()
 
@@ -185,6 +218,8 @@ def smoovie(
     profile: bool = False,
     iwp_sigma: float = 1e-3,
     iwp_noise: float = 1e-2,
+    apply_beam: bool = True,
+    ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
     overwrite: bool = False,
     nframes: int | None = None,
     serve: bool = True,
@@ -206,7 +241,9 @@ def smoovie(
     overlays each catalogue satellite above ``catalog_elevation_deg`` as 3D tracks; it requires
     network access to the TART catalogue API, cached at ``catalog_cache`` (``None`` ->
     ``<output>.catalog.zarr``). ``profile`` prints the imaging wall-time; ``nframes`` caps the frames
-    imaged; ``iwp_sigma``/``iwp_noise`` set the per-pixel filter's σ²/R.
+    imaged; ``iwp_sigma``/``iwp_noise`` set the per-pixel filter's σ²/R. ``apply_beam`` (default on)
+    folds the Airy primary beam of a ``ground_plane_diameter``-metre aperture into the measurement
+    operator so the maps are oriented toward the intrinsic sky.
 
     Returns:
         The ``output`` zarr path.
@@ -257,6 +294,8 @@ def smoovie(
                 nframes=nframes,
                 iwp_sigma=iwp_sigma,
                 iwp_noise=iwp_noise,
+                apply_beam=apply_beam,
+                ground_plane_diameter=ground_plane_diameter,
             )
         if serve:
             holder.finish()
