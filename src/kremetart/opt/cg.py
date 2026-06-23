@@ -47,15 +47,17 @@ def cg(
     b = xp.asarray(b)
     x = xp.zeros_like(b) if x0 is None else xp.asarray(x0).copy()
 
-    r = b - A(x)
-    z = r if M is None else M(r)
-    p = z.copy()
-    rz = xp.vdot(r, z).real
-
+    # Return before forming r / applying M: for b == 0 the solution is x0 (or zeros), and a
+    # zero-diagonal Jacobi M would otherwise hit a 0*inf NaN computing the (discarded) residual.
     b_norm = xp.sqrt(xp.vdot(b, b).real)
     if float(b_norm) == 0.0:
         return x  # b == 0 -> x = 0 (or the warm start, which the data does not constrain)
     thresh = tol * b_norm
+
+    r = b - A(x)
+    z = r if M is None else M(r)
+    p = z.copy()
+    rz = xp.vdot(r, z).real
 
     for _ in range(maxiter):
         if xp.sqrt(xp.vdot(r, r).real) <= thresh:

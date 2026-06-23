@@ -7,7 +7,13 @@ PSD over many steps, and the whitening property (Task 2).
 
 import numpy as np
 
-from kremetart.utils.iwp import iwp_transition, kalman_predict, kalman_update
+from kremetart.utils.iwp import (
+    frame_has_observation,
+    iwp_filter_step,
+    iwp_transition,
+    kalman_predict,
+    kalman_update,
+)
 
 
 def test_iwp_transition_closed_form():
@@ -62,3 +68,58 @@ def test_innovations_whiten_on_synthetic_iwp():
 
     assert abs(float(z.mean())) < 0.05
     assert 0.9 < float((z**2).mean()) < 1.1  # mean NIS ~ chi^2_1 mean = 1
+
+
+def test_frame_has_observation_flags_no_data_frames():
+    """All-zero (the fully-flagged-frame sentinel) and non-finite frames carry no observation."""
+    assert frame_has_observation(np.array([0.1, -0.2, 0.0]))
+    assert not frame_has_observation(np.zeros(5))
+    assert not frame_has_observation(np.array([1.0, np.nan, 2.0]))
+    assert not frame_has_observation(np.array([1.0, np.inf]))
+
+
+def test_iwp_filter_step_with_obs_matches_predict_then_update():
+    """has_obs=True reproduces the explicit predict-then-update recursion the operator used."""
+    rng = np.random.default_rng(0)
+    npix = 6
+    x = rng.standard_normal((npix, 2))
+    cov = np.broadcast_to(np.eye(2) * 3.0, (npix, 2, 2)).copy()
+    y = rng.standard_normal(npix)
+    dt, sigma2, r_noise = 1.3, 0.1, 0.05
+
+    a, q = iwp_transition(dt, sigma2)
+    x_pred, p_pred = kalman_predict(x, cov, a, q)
+    x_kk, p_kk, e, s = kalman_update(x_pred, p_pred, y, r_noise)
+
+    x2, p2, filtered, znorm = iwp_filter_step(x, cov, dt=dt, y=y, sigma2=sigma2, R=r_noise, has_obs=True)
+    np.testing.assert_allclose(x2, x_kk)
+    np.testing.assert_allclose(p2, p_kk)
+    np.testing.assert_allclose(filtered, x_kk[:, 0])
+    np.testing.assert_allclose(znorm, e / np.sqrt(s))
+
+
+def test_iwp_filter_step_predict_only_coasts_across_gap():
+    """A no-data frame advances by predict only: the mean follows the IWP linear extrapolation,
+    the innovation is zero, and the covariance inflates (uncertainty grows, nothing shrinks it)."""
+    npix = 4
+    x = np.tile(np.array([2.0, 0.5]), (npix, 1))  # flux 2.0, slope 0.5 per second
+    cov = np.broadcast_to(np.eye(2) * 1.0, (npix, 2, 2)).copy()
+    dt, sigma2, r_noise = 1.0, 0.05, 0.2
+
+    x2, p2, filtered, znorm = iwp_filter_step(
+        x, cov, dt=dt, y=np.full(npix, 99.0), sigma2=sigma2, R=r_noise, has_obs=False
+    )
+    np.testing.assert_allclose(filtered, 2.0 + dt * 0.5)  # predicted, y ignored
+    np.testing.assert_allclose(x2[:, 1], 0.5)  # slope unchanged by predict
+    np.testing.assert_array_equal(znorm, np.zeros(npix))
+    assert np.all(p2[:, 0, 0] > cov[:, 0, 0])  # covariance inflated, no update shrank it
+
+
+def test_iwp_filter_step_frame_zero_is_update_only():
+    """dt=None (frame 0): no predict; with data, update-only from the diffuse prior lands near y."""
+    npix = 3
+    x = np.zeros((npix, 2))
+    cov = np.broadcast_to(np.eye(2) * 1e6, (npix, 2, 2)).copy()
+    y = np.array([1.0, 2.0, 3.0])
+    _, _, filtered, _ = iwp_filter_step(x, cov, dt=None, y=y, sigma2=0.1, R=0.01, has_obs=True)
+    np.testing.assert_allclose(filtered, y, rtol=1e-4)

@@ -87,6 +87,19 @@ class TikhonovOperator(Operator):
         boresight = cp.asarray(op_input.receive("BORESIGHT"))  # (1, 3)
         time_out = cp.asarray(op_input.receive("time_out"))  # (1,)
 
+        w = weights[0]  # (nbl, nchan)
+        wsum = w.sum()
+        # Fully-flagged frame: λ = eta·Σw = 0 makes H + λI singular and the imager's dirty is the
+        # all-zero no-data map, so there is nothing to solve. Pass the zero map straight through (the
+        # IWP reads it as a no-data frame and coasts); leave the warm-start untouched so the next
+        # live frame still seeds from the last good solution.
+        if float(wsum) == 0.0:
+            zeros = cp.zeros(self.pix_vec.shape[0], dtype=cp.float64)
+            op_output.emit(hs.as_tensor(zeros[None, :]), "cube")
+            op_output.emit(hs.as_tensor(dirty), "dirty")
+            op_output.emit(hs.as_tensor(time_out), "time_out")
+            return
+
         beam = None
         if self.apply_beam:
             beam = airy_power_beam(
@@ -94,9 +107,7 @@ class TikhonovOperator(Operator):
             )  # (nchan, npix)
 
         rows = b_rot[0]  # (nbl, 3)
-        w = weights[0]  # (nbl, nchan)
         hmv, hdiag = hessian_healpix(rows, self.pix_vec, self.freqs, w, beam=beam, xp=cp)
-        wsum = w.sum()
         lam = self.eta * wsum
 
         def a_matvec(x):

@@ -76,3 +76,57 @@ def kalman_update(X_pred, P_pred, y, R, *, xp: ModuleType = np):
     i_kh = eye - kh
     p_kk = xp.einsum("pij,pjk,plk->pil", i_kh, P_pred, i_kh) + R * (k[:, :, None] * k[:, None, :])
     return x_kk, p_kk, e, s
+
+
+def frame_has_observation(y, *, xp: ModuleType = np) -> bool:
+    """Whether a frame carries a usable observation, or the filter should coast over it.
+
+    A fully-flagged frame (all weights zero) is imaged as an all-zero map -- the no-data sentinel
+    the imager and Tikhonov stage emit instead of a ``0/0`` NaN (see
+    :func:`kremetart.utils.healpix_dft.dirty_map`) -- and any non-finite pixel likewise cannot
+    inform the per-pixel filter. Either case means *no observation*: the IWP step predicts only.
+
+    Args:
+        y: ``(npix,)`` observation (dirty-map pixel values).
+        xp: array module.
+
+    Returns:
+        ``True`` if ``y`` is finite and not identically zero, else ``False``.
+    """
+    return bool(xp.all(xp.isfinite(y))) and not bool(xp.all(y == 0.0))
+
+
+def iwp_filter_step(X, P, *, dt, y, sigma2, R, has_obs: bool = True, xp: ModuleType = np):
+    """One per-frame IWP-Kalman step: predict across ``dt``, then update unless the frame has no data.
+
+    Wraps :func:`kalman_predict`/:func:`kalman_update` into the exact recursion the GPU operator
+    runs, with one addition: a no-data frame (``has_obs=False``; see :func:`frame_has_observation`)
+    advances the state by the predict step alone -- the principled treatment of a gap in the
+    sidereally-fixed light curves (design note, sec:imaging) -- so a fully-flagged frame coasts on
+    the prediction instead of poisoning the filter.
+
+    Args:
+        X: ``(npix, 2)`` prior means x_{k-1|k-1}.
+        P: ``(npix, 2, 2)`` prior covariances P_{k-1|k-1}.
+        dt: inter-frame interval (seconds); ``None`` on frame 0 (no predict, diffuse prior).
+        y: ``(npix,)`` observation; ignored when ``has_obs`` is False.
+        sigma2: IWP driving variance sigma^2.
+        R: scalar measurement-noise variance.
+        has_obs: when False the frame carries no usable data -> predict-only (coast), no update.
+        xp: array module.
+
+    Returns:
+        ``(X, P, filtered, znorm)``: posterior means ``(npix, 2)`` and covariances ``(npix, 2, 2)``,
+        the filtered flux ``X[:, 0]`` ``(npix,)``, and the normalised innovation ``(npix,)`` -- the
+        latter all zeros on a no-data frame, where no innovation is defined.
+    """
+    x, p = X, P
+    if dt is not None:
+        a, q = iwp_transition(dt, sigma2, xp=xp)
+        x, p = kalman_predict(x, p, a, q, xp=xp)
+    if has_obs:
+        x, p, e, s = kalman_update(x, p, y, R, xp=xp)
+        znorm = e / xp.sqrt(s)
+    else:
+        znorm = xp.zeros(x.shape[0], dtype=x.dtype)
+    return x, p, x[:, 0], znorm

@@ -11,7 +11,7 @@ import cupy as cp
 import holoscan as hs
 from holoscan.core import Operator, OperatorSpec
 
-from kremetart.utils.iwp import iwp_transition, kalman_predict, kalman_update
+from kremetart.utils.iwp import frame_has_observation, iwp_filter_step
 
 _DIFFUSE = 1e6  # diffuse-prior variance for the frame-0 warm-up
 
@@ -55,16 +55,21 @@ class IWPKalmanOperator(Operator):
         t = float(time_out[0])
 
         # Assumes in-order, non-duplicate frames (dt > 0); the single-threaded reader guarantees
-        # this as wired — a dt <= 0 would break covariance PSD.
-        if self.t_prev is not None:
-            a, q = iwp_transition(t - self.t_prev, self.sigma2, xp=cp)
-            self.X, self.P = kalman_predict(self.X, self.P, a, q, xp=cp)
-
-        self.X, self.P, e, s = kalman_update(self.X, self.P, y, self.noise, xp=cp)
+        # this as wired — a dt <= 0 would break covariance PSD. A fully-flagged frame arrives as an
+        # all-zero (or non-finite) map: the filter coasts on its prediction (predict-only) instead
+        # of ingesting it, so one gap never poisons the state. dt=None on frame 0 (no predict yet).
+        dt = None if self.t_prev is None else t - self.t_prev
+        self.X, self.P, filtered, znorm = iwp_filter_step(
+            self.X,
+            self.P,
+            dt=dt,
+            y=y,
+            sigma2=self.sigma2,
+            R=self.noise,
+            has_obs=frame_has_observation(y, xp=cp),
+            xp=cp,
+        )
         self.t_prev = t
-
-        filtered = self.X[:, 0]
-        znorm = e / cp.sqrt(s)
 
         op_output.emit(hs.as_tensor(cube), "cube")  # passthrough dirty map
         op_output.emit(hs.as_tensor(filtered[None, :]), "filtered")

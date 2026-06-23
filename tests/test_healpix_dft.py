@@ -319,3 +319,18 @@ def test_cg_solves_tikhonov_system_against_dense():
         xp=np,
     )
     np.testing.assert_allclose(x_cg, x_dense, rtol=1e-6, atol=1e-7)
+
+
+def test_dirty_map_all_zero_weights_returns_finite_zeros():
+    """A fully-flagged frame (all weights 0) must not divide 0/0 -> NaN; it emits a clean zero map
+    so the downstream IWP filter sees a no-data frame, not a poisoned (NaN) observation."""
+    rng = np.random.default_rng(7)
+    pix = make_pixel_grid(2, xp=np)
+    nrow, nchan = 6, 1
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.575e9])
+    vis = rng.standard_normal((nrow, nchan)) + 1j * rng.standard_normal((nrow, nchan))
+    weights = np.zeros((nrow, nchan))
+    dmap = dirty_map(vis, weights, baselines, pix, freqs, xp=np)
+    assert np.all(np.isfinite(dmap))
+    np.testing.assert_array_equal(dmap, np.zeros(pix.shape[0]))

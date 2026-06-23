@@ -110,7 +110,13 @@ def dirty_map(vis, weights, baselines, pix_vec, freqs, *, beam=None, xp: ModuleT
     vis = xp.asarray(vis)
     weights = xp.asarray(weights)
     img = dft_adjoint(weights * vis, baselines, pix_vec, freqs, beam=beam, xp=xp)
-    return img.real / weights.sum()
+    wsum = weights.sum()
+    # A fully-flagged frame (all weights 0) would divide 0/0 -> NaN; emit a clean all-zero map
+    # instead so the downstream IWP filter reads it as a no-data frame (it coasts on its prediction)
+    # rather than ingesting a NaN observation that would poison the Kalman state for the whole run.
+    if float(wsum) == 0.0:
+        return xp.zeros(pix_vec.shape[0], dtype=img.real.dtype)
+    return img.real / wsum
 
 
 def hessian_healpix(baselines, pix_vec, freqs, weights, *, beam=None, xp: ModuleType = np):
