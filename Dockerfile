@@ -64,5 +64,15 @@ COPY src/ src/
 # Install package with full dependencies into the venv (VIRTUAL_ENV is honoured by uv).
 RUN uv pip install --no-cache ".[full]"
 
+# Finalize wheel_axle wheels (holoscan-cu13) at build time. These wheels cannot ship
+# symlinks, so they defer creating their shared-library SONAME links (e.g.
+# libholoscan_core.so.4 -> libholoscan_core.so.4.3.0) to a first-import "finalize" step
+# driven by a .pth file. That step needs to write to site-packages -- which is read-only
+# when the image runs under apptainer/singularity, so finalize fails there and
+# `import holoscan` dies with "libholoscan_core.so.4: cannot open shared object file".
+# Triggering site processing now (writable build layer) bakes the symlinks in, writes the
+# axle.done marker, and self-removes the .pth, so the runtime import is clean and read-only-safe.
+RUN python -c "import holoscan"
+
 # Make CLI available
 CMD ["kremetart", "--help"]
