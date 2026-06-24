@@ -44,3 +44,37 @@ def test_model_visibilities_is_flux_one_superposition():
     # equals the per-source sum with unit weights
     per_src = np.stack([model_visibilities(s[i : i + 1], bl, freqs)[:, 0] for i in range(4)], axis=0).sum(axis=0)
     np.testing.assert_allclose(mvis[:, 0], per_src, rtol=1e-10)
+
+
+def test_model_visibilities_beam_weights_each_source():
+    rng = np.random.default_rng(2)
+    bl = rng.uniform(-5, 5, size=(5, 3))
+    s = enu_direction_cosines(np.array([0.3, 1.2, 2.5]), np.array([0.4, 0.8, 1.3]))
+    freqs = np.array([1.575e9])
+    beam = np.array([[0.0, 1.0, 0.5]])  # (nchan, nsrc): drop src 0, keep src 1, halve src 2
+    got = model_visibilities(s, bl, freqs, beam=beam)
+    want = sum(beam[0, i] * model_visibilities(s[i : i + 1], bl, freqs)[:, 0] for i in range(3))
+    np.testing.assert_allclose(got[:, 0], want, rtol=1e-10)
+
+
+def test_model_visibilities_beam_none_equals_ones():
+    rng = np.random.default_rng(3)
+    bl = rng.uniform(-5, 5, size=(4, 3))
+    s = enu_direction_cosines(np.array([0.1, 2.0]), np.array([0.5, 1.0]))
+    freqs = np.array([1.575e9])
+    np.testing.assert_allclose(
+        model_visibilities(s, bl, freqs),
+        model_visibilities(s, bl, freqs, beam=np.ones((1, 2))),
+        rtol=1e-12,
+    )
+
+
+def test_model_visibilities_airy_beam_downweights_low_elevation():
+    # In ENU the antenna boresight is the zenith (0, 0, 1); the Airy power beam therefore
+    # suppresses a low-elevation source relative to a near-zenith one.
+    from kremetart.utils.beam import airy_power_beam
+
+    s = enu_direction_cosines(np.array([0.0, 0.0]), np.array([np.radians(85.0), np.radians(20.0)]))
+    freqs = np.array([1.575e9])
+    beam = airy_power_beam(s, np.array([0.0, 0.0, 1.0]), freqs)  # (nchan, nsrc)
+    assert beam[0, 0] > beam[0, 1]  # near-zenith source kept, low source down-weighted
