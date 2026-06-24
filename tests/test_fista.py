@@ -49,7 +49,7 @@ def test_backtracking_recovers_from_tiny_l0():
     x, info = fista(a, ah, y, lam=0.3, positive=False, L0=1e-6, tol=1e-10, max_iter=2000)
     expect = np.sign(y) * np.maximum(np.abs(y) - 0.3, 0.0)
     np.testing.assert_allclose(x, expect, atol=1e-5)
-    assert info["lipschitz"] > 1e-6  # grew toward the true Lipschitz constant (~1)
+    assert info["lipschitz"] > 0.5  # grew from 1e-6 toward the true Lipschitz constant (~1)
 
 
 def test_positive_constraint():
@@ -68,3 +68,23 @@ def test_zero_data_returns_zeros():
     np.testing.assert_allclose(x, 0.0)
     assert info["converged"]
     assert info["reweights"] == 0
+
+
+def test_complex_operator_recovers_real_solution():
+    # A maps real x -> COMPLEX data; guards the Re{Aᴴ(...)} gradient handling.
+    # Dropping the real-part wrapper makes the iterate complex and this recovery fails.
+    rng = np.random.default_rng(7)
+    n, m = 6, 24
+    mat = rng.standard_normal((m, n)) + 1j * rng.standard_normal((m, n))
+
+    def A(x):
+        return mat @ x
+
+    def AH(r):
+        return mat.conj().T @ r
+
+    x_true = np.array([0.0, 2.0, 0.0, 1.0, 0.5, 0.0])
+    y = mat @ x_true
+    x, _ = fista(A, AH, y, lam=1e-4, positive=True, tol=1e-12, max_iter=8000)
+    np.testing.assert_allclose(x, x_true, atol=1e-2)
+    assert not np.iscomplexobj(x)  # x stays real through the complex adjoint
