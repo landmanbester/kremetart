@@ -45,8 +45,9 @@ def test_stefcal_phases_track_tart_snapshot(ref_hdf, catalog_cache, catalog_elev
     dead = np.where(np.asarray(gain.ANTENNA_FLAG.values))[0]
     ref = int(np.setdiff1d(np.arange(n_ant), dead)[0])  # first live antenna
 
-    g_hat, info = stefcal_solve(vis, model, a1, a2, n_ant, ref_ant=ref, weight=weight)
-    assert info["converged"]
+    gains, info = stefcal_solve(vis, model, a1, a2, n_ant, ref_ant=ref, weight=weight)
+    assert bool(info["converged"][0])
+    g_hat = gains[0]
 
     got = referenced_phases(g_hat, ref)
     snap = np.angle(np.asarray(gain.GAIN.values))
