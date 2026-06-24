@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from kremetart.opt.fista import _soft_threshold, fista
+from kremetart.utils.skymodel import enu_direction_cosines, model_visibilities
 
 
 def test_soft_threshold_signed():
@@ -123,3 +124,36 @@ def test_reweighting_debiases_sparse_recovery():
     assert info_l1["reweights"] == 0
     assert info_rw["reweights"] >= 1
     np.testing.assert_array_equal(np.where(x_rw > 1e-3)[0], [2, 7, 15])  # exact support
+
+
+def test_exported_from_opt_package():
+    from kremetart.opt import fista as fista_pkg
+
+    assert fista_pkg is fista
+
+
+def test_recover_source_fluxes_through_model_visibilities():
+    # Per-source forward operator: column j is the unit-flux model visibility of source j.
+    az = np.radians([10.0, 120.0, 250.0])
+    el = np.radians([70.0, 40.0, 55.0])
+    s = enu_direction_cosines(az, el)
+    bl_enu = np.array(
+        [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [2.0, 2.0, 0.0], [5.0, 1.0, 0.0], [1.0, 6.0, 0.0], [0.0, 0.0, 0.0]]
+    )
+    freqs = np.array([1.575e9])
+    cols = np.stack(
+        [model_visibilities(s[j : j + 1], bl_enu, freqs).ravel() for j in range(s.shape[0])],
+        axis=1,
+    )  # (nbl*nchan, nsrc)
+
+    def A(x):
+        return cols @ x
+
+    def AH(r):
+        return cols.conj().T @ r
+
+    flux_true = np.array([1.0, 0.5, 2.0])
+    y = cols @ flux_true
+    x, info = fista(A, AH, y, lam=1e-3, positive=True, tol=1e-10, max_iter=5000, max_reweight=4)
+    np.testing.assert_allclose(x, flux_true, atol=1e-2)
+    assert np.all(x >= 0.0)
