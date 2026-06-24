@@ -5,7 +5,7 @@ cabs:
     name: smoovie
     info:
       Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
-    image: ghcr.io/landmanbester/kremetart:latest
+    image: ghcr.io/landmanbester/kremetart:beam
     inputs:
       hdf-dir:
         info:
@@ -59,6 +59,20 @@ cabs:
           Measurement-noise variance (R) for the per-pixel Kalman filter.
         dtype: float
         default: 0.01
+      apply-beam:
+        info:
+          Fold the Airy primary beam into the measurement operator (image the intrinsic sky).
+        dtype: bool
+        default: true
+      ground-plane-diameter:
+        info:
+          Airy aperture (ground plane) diameter in metres.
+        dtype: float
+        default: 0.125
+      eta:
+        info:
+          Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.
+        dtype: Optional[float]
       overwrite:
         info:
           Overwrite the output zarr if it already exists.

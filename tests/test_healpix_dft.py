@@ -8,6 +8,7 @@ from kremetart.utils.healpix_dft import (
     dft_forward,
     dirty_map,
     equatorial_baselines,
+    hessian_healpix,
     image_frame,
     image_frame_prerotated,
     make_pixel_grid,
@@ -153,3 +154,183 @@ def test_image_frame_prerotated_matches_image_frame():
 
     assert got.shape == (pix.shape[0],)
     np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-12)
+
+
+def test_forward_adjoint_hermitian_with_beam():
+    """With a real per-channel beam, dft_adjoint is still the exact Hermitian transpose of dft_forward."""
+    rng = np.random.default_rng(11)
+    pix = make_pixel_grid(8, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 10, 3
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.40e9, 1.50e9, 1.575e9])
+    beam = rng.random((nchan, npix)) + 0.1  # real, positive primary beam
+    image = rng.standard_normal(npix) + 1j * rng.standard_normal(npix)
+    data = rng.standard_normal((nrow, nchan)) + 1j * rng.standard_normal((nrow, nchan))
+    lhs = np.vdot(dft_forward(image, baselines, pix, freqs, beam=beam, xp=np), data)
+    rhs = np.vdot(image, dft_adjoint(data, baselines, pix, freqs, beam=beam, xp=np))
+    np.testing.assert_allclose(lhs, rhs, rtol=1e-10, atol=1e-10)
+
+
+def test_dirty_map_with_beam_scales_and_masks():
+    """Beam measurement operator: a point source images to beam**2 at its pixel; beam==0 -> 0."""
+    rng = np.random.default_rng(12)
+    pix = make_pixel_grid(16, xp=np)
+    npix = pix.shape[0]
+    nrow = 300
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.575e9])
+    beam = rng.random((1, npix)) + 0.2  # positive
+    zeroed = np.array([10, 2000, 3000])  # stand-in for below-horizon pixels
+    beam[0, zeroed] = 0.0
+    src = 1234
+    image = np.zeros(npix)
+    image[src] = 1.0
+    vis = dft_forward(image, baselines, pix, freqs, beam=beam, xp=np)
+    weights = np.ones((nrow, 1))
+    dmap = dirty_map(vis, weights, baselines, pix, freqs, beam=beam, xp=np)
+    assert int(np.argmax(dmap)) == src
+    np.testing.assert_allclose(dmap[src], beam[0, src] ** 2, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(dmap[zeroed], 0.0, atol=1e-12)
+
+
+def test_dirty_map_beam_none_matches_no_beam():
+    """beam=None reproduces the no-beam dirty map exactly (regression)."""
+    rng = np.random.default_rng(13)
+    pix = make_pixel_grid(8, xp=np)
+    nrow = 50
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.50e9, 1.575e9])
+    vis = rng.standard_normal((nrow, 2)) + 1j * rng.standard_normal((nrow, 2))
+    weights = rng.random((nrow, 2))
+    a = dirty_map(vis, weights, baselines, pix, freqs, xp=np)
+    b = dirty_map(vis, weights, baselines, pix, freqs, beam=None, xp=np)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_zenith_icrs_vectors_unit_and_points_up():
+    """Boresight vectors are unit-norm and transform back to altitude ~90 deg at the site."""
+    import astropy.units as u
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+
+    from kremetart.utils.healpix_dft import zenith_icrs_vectors
+
+    lat, lon, alt = -23.7, 133.9, 100.0  # MWA-ish southern site
+    times = np.array([1.6e9, 1.6e9 + 1800.0])
+    vecs = zenith_icrs_vectors(times, lat, lon, alt)
+    assert vecs.shape == (2, 3)
+    np.testing.assert_allclose(np.linalg.norm(vecs, axis=1), 1.0, atol=1e-12)
+
+    loc = EarthLocation(lat=lat * u.deg, lon=lon * u.deg, height=alt * u.m)
+    for t, v in zip(times, vecs):
+        dec = np.arcsin(v[2])
+        ra = np.arctan2(v[1], v[0])
+        aa = SkyCoord(ra=ra * u.rad, dec=dec * u.rad, frame="icrs").transform_to(
+            AltAz(obstime=Time(t, format="unix", scale="utc"), location=loc)
+        )
+        assert aa.alt.deg > 89.9
+
+
+def _dense_hessian(matvec, npix):
+    """Materialise H as a dense (npix, npix) matrix by applying matvec to each unit vector."""
+    cols = np.empty((npix, npix))
+    for j in range(npix):
+        e = np.zeros(npix)
+        e[j] = 1.0
+        cols[:, j] = matvec(e)
+    return cols
+
+
+def test_hessian_healpix_is_self_adjoint():
+    """H = B Mᴴ W M B is symmetric over the reals, with and without a beam."""
+    rng = np.random.default_rng(20)
+    pix = make_pixel_grid(4, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 12, 2
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.40e9, 1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    x = rng.standard_normal(npix)
+    y = rng.standard_normal(npix)
+    for beam in (None, rng.random((nchan, npix)) + 0.1):
+        matvec, _ = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+        np.testing.assert_allclose(np.dot(matvec(x), y), np.dot(x, matvec(y)), rtol=1e-9, atol=1e-9)
+
+
+def test_hessian_diagonal_matches_dense():
+    """The closed-form diagonal equals the dense Hessian's diagonal (beam and no-beam)."""
+    rng = np.random.default_rng(21)
+    pix = make_pixel_grid(2, xp=np)  # npix = 48, small enough to densify
+    npix = pix.shape[0]
+    nrow, nchan = 9, 2
+    baselines = rng.standard_normal((nrow, 3)) * 2.0
+    freqs = np.array([1.40e9, 1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    for beam in (None, rng.random((nchan, npix)) + 0.1):
+        matvec, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+        dense = _dense_hessian(matvec, npix)
+        np.testing.assert_allclose(diagonal, np.diag(dense), rtol=1e-9, atol=1e-9)
+        if beam is None:
+            # diag(H)_j = Σ_c Σ_r W[r,c] for every pixel when there is no beam.
+            np.testing.assert_allclose(diagonal, np.full(npix, weights.sum()), rtol=1e-9, atol=1e-9)
+
+
+def test_hessian_diagonal_zero_below_beam_null():
+    """Pixels where the beam is zero have zero Hessian diagonal."""
+    rng = np.random.default_rng(22)
+    pix = make_pixel_grid(4, xp=np)
+    npix = pix.shape[0]
+    baselines = rng.standard_normal((7, 3))
+    freqs = np.array([1.575e9])
+    weights = rng.random((7, 1)) + 0.1
+    beam = rng.random((1, npix)) + 0.1
+    beam[0, [1, 5, 17]] = 0.0
+    _, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+    np.testing.assert_allclose(diagonal[[1, 5, 17]], 0.0, atol=1e-12)
+
+
+def test_cg_solves_tikhonov_system_against_dense():
+    """(H + λI) x = b solved by preconditioned CG matches a dense direct solve."""
+    from kremetart.opt.cg import cg
+
+    rng = np.random.default_rng(23)
+    pix = make_pixel_grid(2, xp=np)
+    npix = pix.shape[0]
+    nrow, nchan = 11, 1
+    baselines = rng.standard_normal((nrow, nchan + 2)) * 2.0  # (nrow, 3)
+    freqs = np.array([1.575e9])
+    weights = rng.random((nrow, nchan)) + 0.1
+    beam = rng.random((nchan, npix)) + 0.2
+    matvec, diagonal = hessian_healpix(baselines, pix, freqs, weights, beam=beam, xp=np)
+
+    wsum = weights.sum()
+    lam = 0.1 * wsum  # eta = 0.1
+    b = rng.standard_normal(npix)
+
+    dense = _dense_hessian(matvec, npix) + lam * np.eye(npix)
+    x_dense = np.linalg.solve(dense, b)
+    x_cg = cg(
+        lambda v: matvec(v) + lam * v,
+        b,
+        M=lambda r: r / (diagonal + lam),
+        maxiter=500,
+        tol=1e-12,
+        xp=np,
+    )
+    np.testing.assert_allclose(x_cg, x_dense, rtol=1e-6, atol=1e-7)
+
+
+def test_dirty_map_all_zero_weights_returns_finite_zeros():
+    """A fully-flagged frame (all weights 0) must not divide 0/0 -> NaN; it emits a clean zero map
+    so the downstream IWP filter sees a no-data frame, not a poisoned (NaN) observation."""
+    rng = np.random.default_rng(7)
+    pix = make_pixel_grid(2, xp=np)
+    nrow, nchan = 6, 1
+    baselines = rng.standard_normal((nrow, 3))
+    freqs = np.array([1.575e9])
+    vis = rng.standard_normal((nrow, nchan)) + 1j * rng.standard_normal((nrow, nchan))
+    weights = np.zeros((nrow, nchan))
+    dmap = dirty_map(vis, weights, baselines, pix, freqs, xp=np)
+    assert np.all(np.isfinite(dmap))
+    np.testing.assert_array_equal(dmap, np.zeros(pix.shape[0]))

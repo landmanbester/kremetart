@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "healpy>=1.19.0",
-    "hip-cargo>=0.2.1",
+    "hip-cargo>=0.2.2",
 ]
 
 # Lightweight install (default):  pip install kremetart
