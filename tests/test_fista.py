@@ -88,3 +88,38 @@ def test_complex_operator_recovers_real_solution():
     x, _ = fista(A, AH, y, lam=1e-4, positive=True, tol=1e-12, max_iter=8000)
     np.testing.assert_allclose(x, x_true, atol=1e-2)
     assert not np.iscomplexobj(x)  # x stays real through the complex adjoint
+
+
+def _gaussian_operator(rng, m, n):
+    mat = rng.standard_normal((m, n)) + 1j * rng.standard_normal((m, n))
+    return mat, (lambda x: mat @ x), (lambda r: mat.conj().T @ r)
+
+
+def test_reweighting_debiases_sparse_recovery():
+    rng = np.random.default_rng(3)
+    n, m = 20, 60
+    mat, a, ah = _gaussian_operator(rng, m, n)
+    x_true = np.zeros(n)
+    x_true[[2, 7, 15]] = [1.0, 2.0, 1.5]
+    y = mat @ x_true
+
+    x_l1, info_l1 = fista(a, ah, y, lam=0.2, positive=True, tol=1e-9, max_iter=4000)
+    x_rw, info_rw = fista(
+        a,
+        ah,
+        y,
+        lam=0.2,
+        positive=True,
+        tol=1e-9,
+        max_iter=4000,
+        max_reweight=8,
+        reweight_eps=1e-3,
+    )
+
+    err_l1 = np.linalg.norm(x_l1 - x_true)
+    err_rw = np.linalg.norm(x_rw - x_true)
+    assert err_rw <= err_l1 + 1e-9  # reweighting never worse than plain L1
+    assert err_rw < 1e-2  # and essentially exact here
+    assert info_l1["reweights"] == 0
+    assert info_rw["reweights"] >= 1
+    np.testing.assert_array_equal(np.where(x_rw > 1e-3)[0], [2, 7, 15])  # exact support

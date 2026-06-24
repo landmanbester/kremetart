@@ -160,24 +160,38 @@ def fista(
     else:
         x = xp.asarray(x0, dtype=real_dtype).copy()
     w = xp.ones(x.shape, dtype=real_dtype)
-    x, iters, converged, lipschitz = _fista_single(
-        A,
-        AH,
-        y,
-        w,
-        x,
-        lam=lam,
-        weight=weight,
-        positive=positive,
-        L0=L0,
-        eta=eta,
-        max_iter=max_iter,
-        tol=tol,
-        xp=xp,
-    )
+
+    iterations: list[int] = []
+    converged = False
+    lipschitz = 1.0 if L0 is None else float(L0)
+    for ell in range(max_reweight + 1):
+        x_prev_round = x.copy()
+        x, iters, converged, lipschitz = _fista_single(
+            A,
+            AH,
+            y,
+            w,
+            x,
+            lam=lam,
+            weight=weight,
+            positive=positive,
+            L0=L0,
+            eta=eta,
+            max_iter=max_iter,
+            tol=tol,
+            xp=xp,
+        )
+        iterations.append(iters)
+        if ell == max_reweight:
+            break
+        w = 1.0 / (xp.abs(x) + reweight_eps)  # Candès–Wakin–Boyd reweighting
+        denom = max(float(xp.linalg.norm(x_prev_round)), 1e-12)
+        if float(xp.linalg.norm(x - x_prev_round)) / denom < reweight_tol:
+            break  # support / values have stabilised
+
     info = {
-        "iterations": [iters],
-        "reweights": 0,
+        "iterations": iterations,
+        "reweights": len(iterations) - 1,
         "objective": _objective(A, y, weight, x, lam, xp),
         "lipschitz": lipschitz,
         "converged": converged,
