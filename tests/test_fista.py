@@ -157,3 +157,13 @@ def test_recover_source_fluxes_through_model_visibilities():
     x, info = fista(A, AH, y, lam=1e-3, positive=True, tol=1e-10, max_iter=5000, max_reweight=4)
     np.testing.assert_allclose(x, flux_true, atol=1e-2)
     assert np.all(x >= 0.0)
+
+
+def test_negative_max_reweight_clamps_to_plain_l1():
+    # A negative reweight count must behave like max_reweight=0 (one plain-L1 solve), not a no-op.
+    a, ah = _identity_ops()
+    rng = np.random.default_rng(11)
+    y = rng.standard_normal(20)
+    x, info = fista(a, ah, y, lam=0.2, positive=False, max_reweight=-1)
+    assert info["reweights"] == 0
+    assert len(info["iterations"]) == 1

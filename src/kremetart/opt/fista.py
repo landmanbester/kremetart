@@ -94,6 +94,7 @@ def _fista_single(
             x_new = _soft_threshold(z, threshold_w / lipschitz, positive=positive, xp=xp)
             diff = x_new - v
             rhs = f_v + float((diff * g_v).sum()) + 0.5 * lipschitz * float((diff * diff).sum())
+            # +1e-12: numerical slack so float round-off near equality doesn't force a needless backtrack
             if fval(A(x_new) - y) <= rhs + 1e-12 or bt >= 100:
                 break
             lipschitz *= eta
@@ -164,7 +165,7 @@ def fista(
     iterations: list[int] = []
     converged = False
     lipschitz = 1.0 if L0 is None else float(L0)
-    for ell in range(max_reweight + 1):
+    for ell in range(max(max_reweight, 0) + 1):  # negative count -> a single plain-L1 solve
         x_prev_round = x.copy()
         x, iters, converged, lipschitz = _fista_single(
             A,
