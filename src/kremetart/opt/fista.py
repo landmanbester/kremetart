@@ -202,3 +202,86 @@ def fista(
         reweight_tol=reweight_tol,
         xp=xp,
     )
+
+
+def fista_quadratic(
+    hess: Callable,
+    b,
+    *,
+    lam: float,
+    x0=None,
+    positive: bool = True,
+    L0: float | None = None,
+    eta: float = 2.0,
+    max_iter: int = 200,
+    tol: float = 1e-5,
+    max_reweight: int = 0,
+    reweight_eps: float = 1e-3,
+    reweight_tol: float = 1e-3,
+    xp: ModuleType = np,
+):
+    """Minimise ``0.5⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|`` over real ``x`` via reweighted-L1 FISTA.
+
+    For the image-space deconvolution: ``hess`` is the Hessian matvec ``x -> H x`` with
+    ``H = B Mᴴ W M B`` (:func:`kremetart.utils.healpix_dft.hessian_healpix`) and ``b`` the
+    un-normalised dirty image (the imager's normalised dirty times ``Σw``). The full least-squares
+    constant ``½ yᴴ W y`` is dropped — it cancels in the backtracking test and the caller has only
+    ``b``, not ``y`` — so ``info["objective"]`` is the data fit up to that additive constant plus the
+    L1 penalty. The real part of ``hess(x)`` is taken internally (``H`` is real-symmetric over real
+    ``x``), so a complex-returning ``H = Aᴴ W A`` matvec is accepted.
+
+    Args:
+        hess: callable ``x -> H x`` (SPD over the reals; real or complex output, real part used).
+        b: ``(n,)`` real right-hand side (the un-normalised dirty image).
+        lam: L1 strength ``λ`` (``= eta·Σw`` from the operator).
+        x0: optional real warm start; ``None`` -> zeros.
+        positive: enforce ``x >= 0`` in the prox.
+        L0: initial Lipschitz estimate; pass ``diag(H).max()`` for a tight, free seed; ``None`` -> 1.0.
+        eta: backtracking growth factor (> 1) — distinct from the regulariser strength.
+        max_iter, tol, max_reweight, reweight_eps, reweight_tol, xp: as in :func:`fista`.
+
+    Returns:
+        ``(x, info)`` as in :func:`fista`.
+    """
+    b = xp.asarray(b)
+    real_dtype = b.real.dtype
+    if x0 is None:
+        x_init = xp.zeros(b.shape, dtype=real_dtype)
+    else:
+        x_init = xp.asarray(x0, dtype=real_dtype).copy()
+
+    # Short-circuit: if b == 0, return the warm start unchanged.
+    if float(xp.linalg.norm(b)) == 0.0:
+        info = {
+            "iterations": [],
+            "reweights": 0,
+            "objective": lam * float(xp.abs(x_init).sum()),
+            "lipschitz": 1.0 if L0 is None else float(L0),
+            "converged": True,
+        }
+        return x_init, info
+
+    def value(x):
+        hx = xp.real(hess(x))
+        return 0.5 * float((x * hx).sum()) - float((b * x).sum())
+
+    def value_grad(x):
+        hx = xp.real(hess(x))
+        f = 0.5 * float((x * hx).sum()) - float((b * x).sum())
+        return f, hx - b
+
+    return _reweighted_fista(
+        value_grad,
+        value,
+        x_init,
+        lam=lam,
+        positive=positive,
+        L0=L0,
+        eta=eta,
+        max_iter=max_iter,
+        tol=tol,
+        max_reweight=max_reweight,
+        reweight_eps=reweight_eps,
+        reweight_tol=reweight_tol,
+        xp=xp,
+    )
