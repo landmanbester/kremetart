@@ -34,48 +34,18 @@ def _soft_threshold(z, tau, *, positive: bool, xp: ModuleType = np):
     return xp.sign(z) * xp.maximum(xp.abs(z) - tau, 0.0)
 
 
-def _objective(A: Callable, y, weight, x, lam: float, xp: ModuleType) -> float:
-    """Full objective ``0.5 Σ W|A x − y|² + λ Σ|x|`` (plain L1, for diagnostics)."""
-    r = A(x) - y
-    sq = xp.abs(r) ** 2
-    if weight is not None:
-        sq = weight * sq
-    return 0.5 * float(sq.sum()) + lam * float(xp.abs(x).sum())
+def _fista_single(value_grad, value, x_start, threshold_w, *, positive, L0, eta, max_iter, tol, xp):
+    """FISTA with backtracking for one fixed prox threshold and smooth term.
 
-
-def _fista_single(
-    A: Callable,
-    AH: Callable,
-    y,
-    w,
-    x_start,
-    *,
-    lam: float,
-    weight,
-    positive: bool,
-    L0: float | None,
-    eta: float,
-    max_iter: int,
-    tol: float,
-    xp: ModuleType,
-):
-    """FISTA with backtracking for one fixed reweighting vector ``w``.
+    Args:
+        value_grad: callable ``x -> (f(x), grad(x))`` for the smooth data term (momentum point).
+        value: callable ``x -> f(x)`` for the smooth data term (backtracking trials; no gradient).
+        x_start: real warm-start iterate.
+        threshold_w: per-element prox threshold ``lam * w`` (broadcastable to ``x``).
 
     Returns:
         ``(x, iters, converged, lipschitz)``.
     """
-
-    def fval(r):
-        sq = xp.abs(r) ** 2
-        if weight is not None:
-            sq = weight * sq
-        return 0.5 * float(sq.sum())
-
-    def grad_at(r):
-        wr = r if weight is None else weight * r
-        return xp.real(AH(wr))  # x is real -> take the real part of the complex adjoint
-
-    threshold_w = lam * w  # per-element L1 weight (λ · reweight weight)
     lipschitz = 1.0 if L0 is None else float(L0)
     x = xp.asarray(x_start).copy()
     x_prev = x.copy()
@@ -85,9 +55,7 @@ def _fista_single(
     converged = False
     for _ in range(max_iter):
         iters += 1
-        r_v = A(v) - y
-        f_v = fval(r_v)
-        g_v = grad_at(r_v)
+        f_v, g_v = value_grad(v)
         bt = 0
         while True:
             z = v - g_v / lipschitz
@@ -95,7 +63,7 @@ def _fista_single(
             diff = x_new - v
             rhs = f_v + float((diff * g_v).sum()) + 0.5 * lipschitz * float((diff * diff).sum())
             # +1e-12: numerical slack so float round-off near equality doesn't force a needless backtrack
-            if fval(A(x_new) - y) <= rhs + 1e-12 or bt >= 100:
+            if value(x_new) <= rhs + 1e-12 or bt >= 100:
                 break
             lipschitz *= eta
             bt += 1
@@ -110,6 +78,50 @@ def _fista_single(
             converged = True
             break
     return x, iters, converged, lipschitz
+
+
+def _reweighted_fista(
+    value_grad,
+    value,
+    x_init,
+    *,
+    lam: float,
+    positive: bool,
+    L0,
+    eta: float,
+    max_iter: int,
+    tol: float,
+    max_reweight: int,
+    reweight_eps: float,
+    reweight_tol: float,
+    xp: ModuleType,
+):
+    """Outer Candès–Wakin–Boyd reweighting loop shared by ``fista`` and ``fista_quadratic``."""
+    x = xp.asarray(x_init)
+    w = xp.ones(x.shape, dtype=x.dtype)
+    iterations: list[int] = []
+    converged = False
+    lipschitz = 1.0 if L0 is None else float(L0)
+    for ell in range(max(max_reweight, 0) + 1):  # negative count -> a single plain-L1 solve
+        x_prev_round = x.copy()
+        x, iters, converged, lipschitz = _fista_single(
+            value_grad, value, x, lam * w, positive=positive, L0=L0, eta=eta, max_iter=max_iter, tol=tol, xp=xp
+        )
+        iterations.append(iters)
+        if ell == max_reweight:
+            break
+        w = 1.0 / (xp.abs(x) + reweight_eps)  # Candès–Wakin–Boyd reweighting
+        denom = max(float(xp.linalg.norm(x_prev_round)), 1e-12)
+        if float(xp.linalg.norm(x - x_prev_round)) / denom < reweight_tol:
+            break  # support / values have stabilised
+    info = {
+        "iterations": iterations,
+        "reweights": len(iterations) - 1,
+        "objective": value(x) + lam * float(xp.abs(x).sum()),
+        "lipschitz": lipschitz,
+        "converged": converged,
+    }
+    return x, info
 
 
 def fista(
@@ -157,44 +169,36 @@ def fista(
     weight = None if weight is None else xp.asarray(weight)
     real_dtype = y.real.dtype
     if x0 is None:
-        x = xp.zeros(AH(y).shape, dtype=real_dtype)
+        x_init = xp.zeros(AH(y).shape, dtype=real_dtype)
     else:
-        x = xp.asarray(x0, dtype=real_dtype).copy()
-    w = xp.ones(x.shape, dtype=real_dtype)
+        x_init = xp.asarray(x0, dtype=real_dtype).copy()
 
-    iterations: list[int] = []
-    converged = False
-    lipschitz = 1.0 if L0 is None else float(L0)
-    for ell in range(max(max_reweight, 0) + 1):  # negative count -> a single plain-L1 solve
-        x_prev_round = x.copy()
-        x, iters, converged, lipschitz = _fista_single(
-            A,
-            AH,
-            y,
-            w,
-            x,
-            lam=lam,
-            weight=weight,
-            positive=positive,
-            L0=L0,
-            eta=eta,
-            max_iter=max_iter,
-            tol=tol,
-            xp=xp,
-        )
-        iterations.append(iters)
-        if ell == max_reweight:
-            break
-        w = 1.0 / (xp.abs(x) + reweight_eps)  # Candès–Wakin–Boyd reweighting
-        denom = max(float(xp.linalg.norm(x_prev_round)), 1e-12)
-        if float(xp.linalg.norm(x - x_prev_round)) / denom < reweight_tol:
-            break  # support / values have stabilised
+    def fval(r):
+        sq = xp.abs(r) ** 2
+        if weight is not None:
+            sq = weight * sq
+        return 0.5 * float(sq.sum())
 
-    info = {
-        "iterations": iterations,
-        "reweights": len(iterations) - 1,
-        "objective": _objective(A, y, weight, x, lam, xp),
-        "lipschitz": lipschitz,
-        "converged": converged,
-    }
-    return x, info
+    def value(x):
+        return fval(A(x) - y)
+
+    def value_grad(x):
+        r = A(x) - y
+        wr = r if weight is None else weight * r
+        return fval(r), xp.real(AH(wr))  # x is real -> take the real part of the complex adjoint
+
+    return _reweighted_fista(
+        value_grad,
+        value,
+        x_init,
+        lam=lam,
+        positive=positive,
+        L0=L0,
+        eta=eta,
+        max_iter=max_iter,
+        tol=tol,
+        max_reweight=max_reweight,
+        reweight_eps=reweight_eps,
+        reweight_tol=reweight_tol,
+        xp=xp,
+    )
