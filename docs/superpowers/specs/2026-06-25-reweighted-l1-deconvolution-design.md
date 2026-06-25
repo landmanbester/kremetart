@@ -93,13 +93,18 @@ def fista_quadratic(
     eta: float = 2.0,            # backtracking growth factor (> 1)
     max_iter: int = 200,         # max inner FISTA iterations per reweight round
     tol: float = 1e-5,           # inner relative-change stopping tolerance
-    max_reweight: int = 2,       # outer reweighting rounds (0 -> plain L1)
+    max_reweight: int = 0,       # outer reweighting rounds (0 -> plain L1; the operator passes 2)
     reweight_eps: float = 1e-3,  # ε in wᵢ = 1/(|xᵢ| + ε)
     reweight_tol: float = 1e-3,  # outer between-round relative-change stop
     xp: ModuleType = np,
 ) -> tuple[ndarray, dict]:
     """Minimise ½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ| over real x (≥ 0 when positive)."""
 ```
+
+`max_reweight` defaults to `0` (matching `fista`; plain L1) — the deconvolution's reweighting is
+driven by `L1ReweightOperator`, which passes `max_reweight=2` explicitly. `fista_quadratic`
+short-circuits `b==0`, returning the warm start `x0` unchanged with `converged=True, reweights=0`
+(mirroring `cg`'s `b==0` convention; natural FISTA on this quadratic would instead drive `x→0`).
 
 Internals:
 

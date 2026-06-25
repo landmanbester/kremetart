@@ -17,7 +17,8 @@
 - `operators/l1_reweight.py` is inherently GPU-only: `cupy`/`holoscan` imported at module top (as in `operators/tikhonov.py`). It is NOT imported by any CPU test.
 - Conventional Commit messages; end commit bodies with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
 - `eta>0` stays the activation gate; `regulariser` defaults to `"tikhonov"` so existing invocations are unchanged. The CLI option type is **plain `str`** (round-trip-safe), validated in `compose()`.
-- `fista_quadratic` defaults: `max_iter=200, tol=1e-5, max_reweight=2, reweight_eps=1e-3, reweight_tol=1e-3, eta=2.0` (backtracking growth). The solver's `eta` (backtracking) is distinct from the operator/pipeline `eta` (regulariser strength → `lam=eta·wsum`).
+- `fista_quadratic` defaults: `max_iter=200, tol=1e-5, max_reweight=0, reweight_eps=1e-3, reweight_tol=1e-3, eta=2.0` (backtracking growth). `max_reweight=0` matches `fista` (plain L1 by default); the deconvolution's 2 reweight rounds are owned by `L1ReweightOperator`, which passes `max_reweight=2` explicitly. The solver's `eta` (backtracking) is distinct from the operator/pipeline `eta` (regulariser strength → `lam=eta·wsum`).
+- `fista_quadratic` short-circuits `b==0`: it returns the warm start `x0` unchanged with `converged=True, reweights=0` (mirrors `cg`'s `b==0` convention — natural FISTA would instead drive `x→0`).
 
 ---
 
@@ -255,7 +256,7 @@ The image-space entry: minimise `½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|` 
 
 **Interfaces:**
 - Consumes: `_reweighted_fista` (Task 1); `kremetart.utils.healpix_dft.hessian_healpix(baselines, pix_vec, freqs, weights, *, beam=None, xp=np) -> (matvec, diagonal)`; `kremetart.utils.healpix_dft.make_pixel_grid`, `dft_forward`; `kremetart.utils.beam.airy_power_beam`.
-- Produces (for Task 3): `fista_quadratic(hess, b, *, lam, x0=None, positive=True, L0=None, eta=2.0, max_iter=200, tol=1e-5, max_reweight=2, reweight_eps=1e-3, reweight_tol=1e-3, xp=np) -> (x, info)`.
+- Produces (for Task 3): `fista_quadratic(hess, b, *, lam, x0=None, positive=True, L0=None, eta=2.0, max_iter=200, tol=1e-5, max_reweight=0, reweight_eps=1e-3, reweight_tol=1e-3, xp=np) -> (x, info)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -405,7 +406,7 @@ def fista_quadratic(
     eta: float = 2.0,
     max_iter: int = 200,
     tol: float = 1e-5,
-    max_reweight: int = 2,
+    max_reweight: int = 0,
     reweight_eps: float = 1e-3,
     reweight_tol: float = 1e-3,
     xp: ModuleType = np,
@@ -439,6 +440,17 @@ def fista_quadratic(
         x_init = xp.zeros(b.shape, dtype=real_dtype)
     else:
         x_init = xp.asarray(x0, dtype=real_dtype).copy()
+
+    # b == 0 -> the warm start is unconstrained by data; return it (mirrors cg's b==0 convention).
+    if float(xp.linalg.norm(b)) == 0.0:
+        info = {
+            "iterations": [],
+            "reweights": 0,
+            "objective": lam * float(xp.abs(x_init).sum()),
+            "lipschitz": 1.0 if L0 is None else float(L0),
+            "converged": True,
+        }
+        return x_init, info
 
     def value(x):
         hx = xp.real(hess(x))
