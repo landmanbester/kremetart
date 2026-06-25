@@ -91,7 +91,7 @@ def main() -> None:
     mask = pix @ bore[frame] > 0.05  # above-horizon pixels only
     k = args.topk
     print(f"{hdf.name} frame {frame}: nside={args.nside}, eta={args.eta}, Σw={wsum:.3g}, k={k}")
-    print(f"  top-{k} flux fraction  dirty   = {_topk_fraction(np.abs(dirty), mask, k):.3f}")
+    print(f"  top-{k} flux fraction  dirty   = {_topk_fraction(dirty, mask, k):.3f}")
     print(f"  top-{k} flux fraction  tikhonov= {_topk_fraction(x_tik, mask, k):.3f}")
     print(f"  top-{k} flux fraction  l1      = {_topk_fraction(x_l1, mask, k):.3f}   <- higher => cleaner")
     print(f"  l1 solve: reweights={info['reweights']}, iterations={info['iterations']}, converged={info['converged']}")
