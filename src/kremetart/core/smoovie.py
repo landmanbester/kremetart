@@ -25,6 +25,7 @@ from holoscan.conditions import CountCondition
 from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
 from kremetart.operators.iwp_kalman import IWPKalmanOperator
+from kremetart.operators.l1_reweight import L1ReweightOperator
 from kremetart.operators.tikhonov import TikhonovOperator
 from kremetart.operators.web_sink import WebStreamSinkOperator
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
@@ -55,6 +56,7 @@ class SmooviePipeline(hs.core.Application):
         apply_beam: bool = True,
         ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
         eta: float | None = None,
+        regulariser: str = "tikhonov",
         holder: LatestFrameHolder | None = None,
         **kwargs,
     ):
@@ -67,6 +69,7 @@ class SmooviePipeline(hs.core.Application):
         self.apply_beam = apply_beam
         self.ground_plane_diameter = ground_plane_diameter
         self.eta = eta
+        self.regulariser = regulariser
         self.holder = holder
         super().__init__(*args, **kwargs)
 
@@ -124,25 +127,39 @@ class SmooviePipeline(hs.core.Application):
         )
 
         if regularise:
-            tikhonov = TikhonovOperator(
-                self,
-                self.nside,
-                self.freqs,
-                self.eta,
-                name="tikhonov",
-                nest=self.nest,
-                apply_beam=self.apply_beam,
-                ground_plane_diameter=self.ground_plane_diameter,
-            )
-            # Imager dirty is the CG RHS; the reader fans the data that builds the Hessian.
-            self.add_flow(imager, tikhonov, {("cube", "cube"), ("time_out", "time_out")})
+            if self.regulariser == "tikhonov":
+                deconv = TikhonovOperator(
+                    self,
+                    self.nside,
+                    self.freqs,
+                    self.eta,
+                    name="tikhonov",
+                    nest=self.nest,
+                    apply_beam=self.apply_beam,
+                    ground_plane_diameter=self.ground_plane_diameter,
+                )
+            elif self.regulariser == "l1":
+                deconv = L1ReweightOperator(
+                    self,
+                    self.nside,
+                    self.freqs,
+                    self.eta,
+                    name="l1reweight",
+                    nest=self.nest,
+                    apply_beam=self.apply_beam,
+                    ground_plane_diameter=self.ground_plane_diameter,
+                )
+            else:
+                raise ValueError(f"unknown regulariser {self.regulariser!r}; expected 'tikhonov' or 'l1'")
+            # Imager dirty is the deconvolution RHS; the reader fans the data that builds the Hessian.
+            self.add_flow(imager, deconv, {("cube", "cube"), ("time_out", "time_out")})
             self.add_flow(
                 reader,
-                tikhonov,
+                deconv,
                 {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")},
             )
-            self.add_flow(tikhonov, iwp, {("cube", "cube"), ("time_out", "time_out")})
-            self.add_flow(tikhonov, writer, {("dirty", "dirty_raw")})
+            self.add_flow(deconv, iwp, {("cube", "cube"), ("time_out", "time_out")})
+            self.add_flow(deconv, writer, {("dirty", "dirty_raw")})
         else:
             self.add_flow(imager, iwp, {("cube", "cube"), ("time_out", "time_out")})
 
@@ -176,6 +193,7 @@ def image_via_app(
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
     eta: float | None = None,
+    regulariser: str = "tikhonov",
 ) -> Path:
     """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
 
@@ -229,6 +247,7 @@ def image_via_app(
             apply_beam=apply_beam,
             ground_plane_diameter=ground_plane_diameter,
             eta=eta,
+            regulariser=regulariser,
             holder=holder,
         )
         app.config(str(config))
@@ -261,6 +280,7 @@ def smoovie(
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
     eta: float | None = None,
+    regulariser: str = "tikhonov",
     overwrite: bool = False,
     nframes: int | None = None,
     serve: bool = True,
@@ -274,6 +294,8 @@ def smoovie(
     RA/Dec at the global mid-time (:func:`common_phase_direction`); supplying only one raises
     ``ValueError``. Writes ``output`` (a ``(TIME, PIX)`` zarr holding ``dirty``/``filtered``/
     ``znorm``); raises ``FileExistsError`` if it exists unless ``overwrite=True``.
+    ``regulariser`` chooses the deconvolution when ``eta>0`` — ``"tikhonov"`` (CG, default) or
+    ``"l1"`` (reweighted-L1 FISTA).
 
     With ``serve`` (the default), a FastAPI+uvicorn server starts on ``port``, the view URL is
     printed (and opened if ``open_browser``), frames stream live to an interactive sphere, and when
@@ -341,6 +363,7 @@ def smoovie(
                 apply_beam=apply_beam,
                 ground_plane_diameter=ground_plane_diameter,
                 eta=eta,
+                regulariser=regulariser,
             )
         if serve:
             holder.finish()

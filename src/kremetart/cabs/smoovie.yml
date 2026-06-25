@@ -73,6 +73,10 @@ cabs:
         info:
           Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.
         dtype: Optional[float]
+      regulariser:
+        info:
+          'Deconvolution regulariser when eta>0: tikhonov (CG, default) or l1 (reweighted-L1 FISTA).'
+        default: tikhonov
       overwrite:
         info:
           Overwrite the output zarr if it already exists.

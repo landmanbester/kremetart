@@ -104,6 +104,12 @@ def smoovie(
             help="Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.",
         ),
     ] = None,
+    regulariser: Annotated[
+        str,
+        typer.Option(
+            help="Deconvolution regulariser when eta>0: tikhonov (CG, default) or l1 (reweighted-L1 FISTA).",
+        ),
+    ] = "tikhonov",
     overwrite: Annotated[
         bool,
         typer.Option(
@@ -185,6 +191,7 @@ def smoovie(
                     apply_beam=apply_beam,
                     ground_plane_diameter=ground_plane_diameter,
                     eta=eta,
+                    regulariser=regulariser,
                     overwrite=overwrite,
                     nframes=nframes,
                     serve=serve,
@@ -213,6 +220,7 @@ def smoovie(
                 apply_beam=apply_beam,
                 ground_plane_diameter=ground_plane_diameter,
                 eta=eta,
+                regulariser=regulariser,
                 overwrite=overwrite,
                 nframes=nframes,
                 serve=serve,
@@ -250,6 +258,7 @@ def smoovie(
             apply_beam=apply_beam,
             ground_plane_diameter=ground_plane_diameter,
             eta=eta,
+            regulariser=regulariser,
             overwrite=overwrite,
             nframes=nframes,
             serve=serve,
