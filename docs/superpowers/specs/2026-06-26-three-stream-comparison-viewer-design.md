@@ -119,11 +119,13 @@ l1       → sink    {(cube,l1)}
 Writer `var_specs` (input-port → stored-variable):
 `(("dirty","dirty"), ("tikhonov","tikhonov"), ("l1","l1"), ("filtered","filtered"), ("znorm","znorm"))`.
 
-`l1`'s `dirty` and `time_out` output ports are left unconnected (the L1 operator
-is a documented drop-in sibling of Tikhonov with identical ports; only its `cube`
-is consumed). `tikhonov.cube` goes only to the IWP; the `tikhonov` channel is
-sourced from `iwp.cube` (the filter passes its input through unchanged), keeping
-fan-out low.
+`l1` exposes only its `cube` output. (During implementation its previously-unused
+`dirty`/`time_out` output ports were removed: Holoscan refuses to schedule an
+operator whose transmitter has no receiver — `[E00070] No receiver connected to
+transmitter` — so "leaving them unconnected" is not possible. `L1ReweightOperator`
+is therefore no longer port-identical to `TikhonovOperator`; it is used only here.)
+`tikhonov.cube` goes only to the IWP; the `tikhonov` channel is sourced from
+`iwp.cube` (the filter passes its input through unchanged), keeping fan-out low.
 
 **Operators are unchanged.** `TikhonovOperator` and `L1ReweightOperator` keep
 their `eta` constructor argument (meaning "strength as a fraction of Σw");
