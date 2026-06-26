@@ -43,6 +43,7 @@ htmlcov/
 .tox/
 .nox/
 tests/data/
+tests/data_stefcal
 
 # OS
 .DS_Store
