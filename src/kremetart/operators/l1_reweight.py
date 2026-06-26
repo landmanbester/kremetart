@@ -1,13 +1,16 @@
 """Holoscan operator: per-frame reweighted-L1 deconvolution via FISTA (GPU-resident, xp=cupy).
 
-A drop-in sibling of :class:`kremetart.operators.tikhonov.TikhonovOperator`: identical ports and
-per-frame contract, but it solves ``min ½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|`` (non-negative, sparse) with
-:func:`kremetart.opt.fista.fista_quadratic` instead of the Tikhonov CG normal-equation solve. ``H``
-is the image-space Hessian (:func:`kremetart.utils.healpix_dft.hessian_healpix`), ``b`` the
-un-normalised dirty image (the imager's normalised dirty times ``Σw``), and ``λ = eta·Σw`` makes
-``eta`` a frame-invariant fraction of the central PSF value ``Σw`` (matching the Tikhonov knob). The
+The reweighted-L1 counterpart of :class:`kremetart.operators.tikhonov.TikhonovOperator`: it shares
+the same per-frame inputs (the imager dirty plus the weights/geometry/beam that build ``H``) but
+exposes a single output, ``cube`` (the L1 deconvolved image), wired to the writer/sink ``l1`` port in
+:class:`kremetart.core.smoovie.SmooviePipeline`. It solves ``min ½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|``
+(non-negative, sparse) with :func:`kremetart.opt.fista.fista_quadratic` instead of the Tikhonov CG
+normal-equation solve. ``H`` is the image-space Hessian
+(:func:`kremetart.utils.healpix_dft.hessian_healpix`), ``b`` the un-normalised dirty image (the
+imager's normalised dirty times ``Σw``), and ``λ = eta·Σw`` makes ``eta`` a frame-invariant fraction
+of the central PSF value ``Σw`` (matching the Tikhonov knob; ``smoovie`` drives it via ``--l1``). The
 Lipschitz step is seeded from the closed-form ``diag(H).max()`` that ``hessian_healpix`` returns, so
-backtracking almost never fires. Selected via ``smoovie``'s ``--regulariser l1``. See
+backtracking almost never fires. See
 docs/superpowers/specs/2026-06-25-reweighted-l1-deconvolution-design.md.
 """
 

@@ -255,7 +255,7 @@ def test_smoovie_overwrite_fail_fast(tmp_path, hdf_dir, sm_stub, monkeypatch):
 
 
 def test_smoovie_writes_zarr(tmp_path, hdf_dir):
-    """Short end-to-end (no serving): the durable zarr holds the three named maps."""
+    """Short end-to-end (no serving): the durable zarr holds the five named maps."""
     import numpy as np
     import xarray as xr
 
