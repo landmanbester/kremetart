@@ -80,17 +80,13 @@ class L1ReweightOperator(Operator):
         spec.input("WEIGHT")
         spec.input("B_ROT")
         spec.input("BORESIGHT")
-        spec.input("time_out")
-        spec.output("cube")  # regularised image -> IWP
-        spec.output("dirty")  # raw dirty passthrough -> writer
-        spec.output("time_out")
+        spec.output("cube")  # regularised image -> writer "l1" port
 
     def compute(self, op_input, op_output, context):
         dirty = cp.asarray(op_input.receive("cube"))  # (1, npix)
         weights = cp.asarray(op_input.receive("WEIGHT"))  # (1, nbl, nchan)
         b_rot = cp.asarray(op_input.receive("B_ROT"))  # (1, nbl, 3)
         boresight = cp.asarray(op_input.receive("BORESIGHT"))  # (1, 3)
-        time_out = cp.asarray(op_input.receive("time_out"))  # (1,)
 
         w = weights[0]  # (nbl, nchan)
         wsum = w.sum()
@@ -100,8 +96,6 @@ class L1ReweightOperator(Operator):
         if float(wsum) == 0.0:
             zeros = cp.zeros(self.pix_vec.shape[0], dtype=cp.float64)
             op_output.emit(hs.as_tensor(zeros[None, :]), "cube")
-            op_output.emit(hs.as_tensor(dirty), "dirty")
-            op_output.emit(hs.as_tensor(time_out), "time_out")
             return
 
         beam = None
@@ -135,5 +129,3 @@ class L1ReweightOperator(Operator):
         self.x_prev = x
 
         op_output.emit(hs.as_tensor(x[None, :]), "cube")
-        op_output.emit(hs.as_tensor(dirty), "dirty")
-        op_output.emit(hs.as_tensor(time_out), "time_out")
