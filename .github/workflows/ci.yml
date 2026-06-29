@@ -27,7 +27,7 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         if: env.SKIP_CHECKS != 'true'
@@ -41,7 +41,7 @@ jobs:
 
       - name: Cache uv dependencies
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
@@ -84,7 +84,7 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         if: env.SKIP_CHECKS != 'true'
@@ -98,7 +98,7 @@ jobs:
 
       - name: Cache uv dependencies
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
