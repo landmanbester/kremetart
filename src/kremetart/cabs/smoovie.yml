@@ -5,7 +5,7 @@ cabs:
     name: smoovie
     info:
       Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
-    image: ghcr.io/landmanbester/kremetart:latest
+    image: ghcr.io/landmanbester/kremetart:calibration
     inputs:
       hdf-dir:
         info:
@@ -69,10 +69,16 @@ cabs:
           Airy aperture (ground plane) diameter in metres.
         dtype: float
         default: 0.125
-      eta:
+      l2:
         info:
-          Tikhonov regularisation strength (fraction of weight sum); inserts a CG deconvolution stage.
-        dtype: Optional[float]
+          Tikhonov (L2) deconvolution strength as a fraction of weight sum (lambda = l2 * sum w).
+        dtype: float
+        default: 0.01
+      l1:
+        info:
+          Reweighted-L1 deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).
+        dtype: float
+        default: 0.01
       overwrite:
         info:
           Overwrite the output zarr if it already exists.

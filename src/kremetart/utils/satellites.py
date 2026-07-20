@@ -225,3 +225,36 @@ def satellite_tracks(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_p
         for src, ra, dec in zip(sources, icrs.ra.deg, icrs.dec.deg):
             tracks.setdefault(src["name"], []).append((i, float(ra), float(dec), float(src["jy"])))
     return tracks
+
+
+def frame_source_directions(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_path=None, nframes=None):
+    """Per-frame ``(name, az_rad, el_rad)`` source lists aligned 1:1 with the imaged frame order.
+
+    Reuses the cache-aware fetch loop of :func:`satellite_tracks` but returns ENU az/el (radians)
+    for the calibration sky model rather than grouping into ICRS tracks. Catalogue az/el are stored
+    in degrees and converted to radians here.
+
+    Args:
+        hdf_paths: ordered iterable of TART HDF paths (same order as the imaged frames).
+        elevation_deg: elevation cutoff (deg) for catalogue sources.
+        fetch: ``callable(lon, lat, datestr, elevation_deg) -> list[dict]``; injectable for tests.
+        cache_path: optional catalogue cache zarr path; ``None`` disables caching.
+        nframes: optional cap on the number of leading frames processed.
+
+    Returns:
+        ``list`` (one entry per frame) of ``list[(name, az_rad, el_rad)]``.
+    """
+    times_unix, lat, lon, _alt = _frame_times_and_site(hdf_paths)
+    if nframes is not None:
+        times_unix = times_unix[:nframes]
+    datestrs = [datetime.datetime.fromtimestamp(float(t), tz=datetime.timezone.utc).isoformat() for t in times_unix]
+
+    cached = _load_catalog_cache(cache_path, lat, lon, elevation_deg) if cache_path else None
+    out: list[list[tuple[str, float, float]]] = []
+    for datestr in datestrs:
+        if cached is not None and datestr in cached:
+            sources = cached[datestr]
+        else:
+            sources = fetch(lon, lat, datestr, elevation_deg)
+        out.append([(str(s["name"]), np.radians(float(s["az"])), np.radians(float(s["el"]))) for s in sources])
+    return out
