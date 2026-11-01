@@ -97,7 +97,7 @@ def test_image_via_app_end_to_end(hdf_paths, tmp_path):
     nside = 8
     npix = 12 * nside * nside
     out = tmp_path / "imaging.zarr"
-    result = image_via_app(hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3)
+    result = image_via_app(hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3, l1=0.01)
     assert Path(result) == out and out.exists()
     ds = xr.open_zarr(out)
     for var in ("dirty", "tikhonov", "l1", "filtered", "znorm"):
@@ -255,7 +255,7 @@ def test_smoovie_overwrite_fail_fast(tmp_path, hdf_dir, sm_stub, monkeypatch):
 
 
 def test_smoovie_writes_zarr(tmp_path, hdf_dir):
-    """Short end-to-end (no serving): the durable zarr holds the five named maps."""
+    """Short end-to-end (no serving): by default (L1 off) the zarr holds the four non-L1 maps."""
     import numpy as np
     import xarray as xr
 
@@ -265,6 +265,7 @@ def test_smoovie_writes_zarr(tmp_path, hdf_dir):
     smoovie(hdf_dir=hdf_dir, output=out, nside=16, nframes=4, serve=False)
     assert out.exists()
     ds = xr.open_zarr(out)
-    for var in ("dirty", "tikhonov", "l1", "filtered", "znorm"):
+    assert "l1" not in ds
+    for var in ("dirty", "tikhonov", "filtered", "znorm"):
         assert ds[var].shape[0] == 4
         assert np.all(np.isfinite(ds[var].values))

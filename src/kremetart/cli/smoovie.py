@@ -105,11 +105,12 @@ def smoovie(
         ),
     ] = 0.01,
     l1: Annotated[
-        float,
+        float | None,
         typer.Option(
-            help="Reweighted-L1 deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).",
+            help="Reweighted-L1 (FISTA) deconvolution strength as a fraction of weight sum (lambda = l1 * sum w). "
+            "Off by default because it dominates the runtime; pass a value such as 0.01 to enable it.",
         ),
-    ] = 0.01,
+    ] = None,
     overwrite: Annotated[
         bool,
         typer.Option(
