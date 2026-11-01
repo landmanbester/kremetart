@@ -5,7 +5,6 @@ import pytest
 import xarray as xr
 
 from kremetart.utils import partition_datatree
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 from tests.accuracy_helpers import (
     antenna_ecef,
     antenna_enu_and_site,
@@ -17,7 +16,7 @@ from tests.accuracy_helpers import (
 
 @pytest.fixture(scope="module")
 def positions(ref_hdf, ref_ms_nocal):
-    ours_part = partition_datatree(read_hdf_as_msv4(ref_hdf))
+    ours_part = partition_datatree(xr.open_datatree(ref_hdf, engine="tart"))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     truth = enu_to_ecef_truth(enu, lat, lon, alt)
     ours = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))

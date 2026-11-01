@@ -16,6 +16,7 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+import xarray as xr
 
 from kremetart.opt.cg import cg
 from kremetart.opt.fista import fista_quadratic
@@ -28,7 +29,6 @@ from kremetart.utils.healpix_dft import (
     make_pixel_grid,
     zenith_icrs_vectors,
 )
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 
 def _topk_fraction(x: np.ndarray, mask: np.ndarray, k: int) -> float:
@@ -52,7 +52,7 @@ def main() -> None:
     args = parser.parse_args()
 
     hdf = Path(args.hdf)
-    node = partition_datatree(read_hdf_as_msv4(hdf))
+    node = partition_datatree(xr.open_datatree(hdf, engine="tart"))
     main_ds = node.ds
     ant = node["antenna_xds"].to_dataset(inherit=False)
     names = list(ant.antenna_name.values)

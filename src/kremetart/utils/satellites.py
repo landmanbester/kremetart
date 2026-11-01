@@ -17,9 +17,7 @@ from __future__ import annotations
 import datetime
 
 import numpy as np
-
-from kremetart.utils import partition_datatree
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from tart_msv4.backend import read_metadata
 
 
 def _tart_api_fetch(lon, lat, datestr, elevation_deg):
@@ -61,21 +59,17 @@ def _frame_times_and_site(hdf_paths):
         ValueError: if ``hdf_paths`` is empty.
     """
 
+    # Only timestamps and the site are needed, so read the metadata without building the MSv4 tree.
     times_unix: list[float] = []
-    info = None
+    config = None
     for path in hdf_paths:
-        main = partition_datatree(read_hdf_as_msv4(path)).ds
-        times_unix.extend(float(t) for t in np.asarray(main.time.values))
-        if info is None:
-            info = main.attrs["observation_info"]
-    if info is None:
+        meta = read_metadata(path)
+        times_unix.extend(float(t) for t in meta["time"])
+        if config is None:
+            config = meta["config"]
+    if config is None:
         raise ValueError("no HDF files provided")
-    return (
-        np.asarray(times_unix),
-        info["site_latitude_deg"],
-        info["site_longitude_deg"],
-        info["site_altitude_m"],
-    )
+    return np.asarray(times_unix), float(config["lat"]), float(config["lon"]), float(config["alt"])
 
 
 def _load_catalog_cache(path, lat, lon, elevation_deg):

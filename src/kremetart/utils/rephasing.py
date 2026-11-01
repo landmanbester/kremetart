@@ -32,9 +32,7 @@ import numpy as np
 import xarray as xr
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.time import Time
-
-from kremetart.utils import partition_datatree
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
+from tart_msv4.backend import read_metadata
 
 
 def midpoint_zenith(dt: xr.DataTree) -> tuple[float, float]:
@@ -44,7 +42,7 @@ def midpoint_zenith(dt: xr.DataTree) -> tuple[float, float]:
     fixed direction for a short TART chunk.
 
     Args:
-        dt: An MSv4 DataTree from :func:`kremetart.utils.read_tart_hdf.read_hdf_as_msv4`.
+        dt: An MSv4 DataTree from ``xr.open_datatree(path, engine="tart")`` (tart-msv4).
 
     Returns:
         ``(ra, dec)`` in radians (ICRS).
@@ -81,7 +79,7 @@ def rephase_to_dir(
 
     Note:
         The UVW coordinates are computed from the ITRF antenna positions stored in the input
-        DataTree, which :func:`kremetart.utils.read_tart_hdf.read_hdf_as_msv4` derives from the
+        DataTree, which tart-msv4 (``engine="tart"``) derives from the
         local ENU positions via the exact tangent-plane ENU->ECEF transform at the site geodetic
         latitude. ``tart2ms`` instead places each antenna with a spherical ``astropy.offset_by``
         using a *mean* Earth radius (``R_earth`` ~ 6371 km) rather than the local WGS84 radius of
@@ -93,7 +91,7 @@ def rephase_to_dir(
         tiny new-vs-old direction-cosine offset (verified to agree to ~1e-4).
 
     Args:
-        dt: An MSv4 DataTree from :func:`kremetart.utils.read_tart_hdf.read_hdf_as_msv4`.
+        dt: An MSv4 DataTree from ``xr.open_datatree(path, engine="tart")`` (tart-msv4).
         new_dir: Target phase centre as ``(ra, dec)`` in radians (ICRS). Use
             :func:`midpoint_zenith` for the observation-midpoint zenith.
         xp: Array module for the device arithmetic (``numpy`` or ``cupy``). Defaults to ``numpy``.
@@ -339,25 +337,18 @@ def common_phase_direction(hdf_paths) -> tuple[float, float]:
     """
 
     t_lo = t_hi = None
-    info = None
+    config = None
     for path in hdf_paths:
-        main = partition_datatree(read_hdf_as_msv4(path)).ds
-        times = np.asarray(main.time.values)
-        lo, hi = float(times.min()), float(times.max())
+        meta = read_metadata(path)  # timestamps and site only; no MSv4 tree needed
+        config = config or meta["config"]  # site from the first file; all inputs share one site
+        lo, hi = float(meta["time"].min()), float(meta["time"].max())
         t_lo = lo if t_lo is None else min(t_lo, lo)
         t_hi = hi if t_hi is None else max(t_hi, hi)
-        # Site info comes from the first file; all inputs are assumed to share the same array site.
-        if info is None:
-            info = main.attrs["observation_info"]
-    if info is None:
+    if config is None:
         raise ValueError("no HDF files provided")
 
     t_mid = 0.5 * (t_lo + t_hi)
-    loc = EarthLocation(
-        lat=info["site_latitude_deg"] * u.deg,
-        lon=info["site_longitude_deg"] * u.deg,
-        height=info["site_altitude_m"] * u.m,
-    )
+    loc = EarthLocation(lat=config["lat"] * u.deg, lon=config["lon"] * u.deg, height=config["alt"] * u.m)
     aa = AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=Time(t_mid, format="unix", scale="utc"), location=loc)
     icrs = SkyCoord(aa).icrs
     return float(icrs.ra.deg), float(icrs.dec.deg)

@@ -10,10 +10,10 @@ under ``scripts/`` as a validation helper.
 from __future__ import annotations
 
 import numpy as np
+import xarray as xr
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.beam import airy_power_beam
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 from kremetart.utils.satellites import frame_source_directions
 from kremetart.utils.skymodel import enu_direction_cosines, model_visibilities
 from kremetart.utils.stefcal import stefcal_solve
@@ -34,7 +34,7 @@ def solve_file_gains(hdf_path, cache_path, *, elevation_deg: float = 45.0, use_b
         ``(gains, names, ref_ant)``: ``gains`` is ``(n_ant,)`` complex with ``gains[ref_ant] == 1``
         and dead antennas ``NaN``; ``names`` the antenna names; ``ref_ant`` the reference antenna.
     """
-    node = partition_datatree(read_hdf_as_msv4(hdf_path))
+    node = partition_datatree(xr.open_datatree(hdf_path, engine="tart"))
     main = node.ds
     ant = node["antenna_xds"].to_dataset(inherit=False)
     names = list(ant.antenna_name.values)
@@ -42,11 +42,12 @@ def solve_file_gains(hdf_path, cache_path, *, elevation_deg: float = 45.0, use_b
     index = {n: i for i, n in enumerate(names)}
     a1 = np.array([index[n] for n in main.baseline_antenna1_name.values])
     a2 = np.array([index[n] for n in main.baseline_antenna2_name.values])
-    bl_enu = ant.ANTENNA_POSITION_ENU.values[a1] - ant.ANTENNA_POSITION_ENU.values[a2]
+    enu = node["gain_xds"].to_dataset(inherit=False).isel(gain_time=0).ANTENNA_POSITION_ENU.values
+    bl_enu = enu[a1] - enu[a2]
     freqs = np.asarray(main.frequency.values)
     vis = np.asarray(main.VISIBILITY.values)[:, :, :, 0]  # (ntime, nbl, nchan)
     wgt = np.asarray(main.WEIGHT.values)[:, :, :, 0]
-    dead = np.asarray(node["gain_xds"].to_dataset(inherit=False).ANTENNA_FLAG.values)
+    dead = np.asarray(node["gain_xds"].to_dataset(inherit=False).isel(gain_time=0).ANTENNA_FLAG.values)
     ref = int(np.where(~dead)[0][0])  # first live antenna
 
     per_frame = frame_source_directions([hdf_path], elevation_deg, cache_path=str(cache_path))

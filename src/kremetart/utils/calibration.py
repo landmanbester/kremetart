@@ -9,11 +9,17 @@ def correct_file_gains(node, vis, wgt, *, xp=np):
     Maps each baseline to its two antenna gains the same way :func:`itrs_baselines` maps
     antennas, then delegates to :func:`kremetart.utils.gains.apply_inverse_gains`. The gain
     snapshot is per-file (time-independent), so this runs once before the sub-integration loop.
+
+    Raises:
+        ValueError: If ``node`` holds more than one file's gains (tart-msv4's ``gain_time`` axis).
     """
 
     antenna = node["antenna_xds"].to_dataset(inherit=False)
     index = {name: i for i, name in enumerate(antenna.antenna_name.values)}
     a1 = np.array([index[n] for n in node.ds.baseline_antenna1_name.values])
     a2 = np.array([index[n] for n in node.ds.baseline_antenna2_name.values])
-    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
+    gain = node["gain_xds"].to_dataset(inherit=False).GAIN
+    if gain.sizes["gain_time"] != 1:
+        raise ValueError(f"expected one file's gains, got {gain.sizes['gain_time']} (open files one at a time)")
+    gains = gain.values[0]
     return apply_inverse_gains(vis, wgt, gains, a1, a2, xp=xp)

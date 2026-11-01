@@ -4,14 +4,14 @@ import os
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.calibration import correct_file_gains
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 
 def test_correct_file_gains_real_data(hdf_paths):
-    node = partition_datatree(read_hdf_as_msv4(hdf_paths[0]))
+    node = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart"))
     main = node.ds
     vis = np.asarray(main.VISIBILITY.values)[..., 0]
     wgt = np.asarray(main.WEIGHT.values)[..., 0]
@@ -23,7 +23,7 @@ def test_correct_file_gains_real_data(hdf_paths):
     # The correction must actually change non-trivial gains.
     assert not np.allclose(vis_c, vis)
     # Dead antennas (gain 0) -> zero-weight, zero-vis baselines (no inf/nan).
-    gains = node["gain_xds"].to_dataset(inherit=False).GAIN.values
+    gains = node["gain_xds"].to_dataset(inherit=False).isel(gain_time=0).GAIN.values
     if np.any(gains == 0):
         assert np.any(wgt_c == 0)
 
@@ -43,7 +43,7 @@ def test_weighted_corrected_vis_matches_calibrated_ms(ref_hdf, ref_ms):
     """
     import xarray as xr
 
-    node = partition_datatree(read_hdf_as_msv4(ref_hdf))
+    node = partition_datatree(xr.open_datatree(ref_hdf, engine="tart"))
     main = node.ds
     vis = np.asarray(main.VISIBILITY.values)[..., 0]
     wgt = np.asarray(main.WEIGHT.values)[..., 0]
