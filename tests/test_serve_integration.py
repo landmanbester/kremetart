@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame
+from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame, stream_names
 from kremetart.utils.web_server import FrameServer
 
 
@@ -127,9 +127,8 @@ def test_stream_protocol_geometry_frames_end(served):
 
 @pytest.mark.skipif(not _gpu(), reason="requires a CUDA device + cupy/holoscan/healpy")
 @pytest.mark.parametrize("l1", [None, 0.01], ids=["l1-off", "l1-on"])
-def test_fanout_populates_holder(tmp_path, l1):
+def test_fanout_populates_holder(tmp_path: Path, l1: float | None) -> None:
     """Serve-mode pipeline (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
-    from kremetart.utils.healpix_viz import stream_names
 
     data_dir = Path(__file__).resolve().parent / "data"
     hdf_paths = sorted(data_dir.glob("*.hdf"))
