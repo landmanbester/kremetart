@@ -31,7 +31,7 @@ from kremetart.operators.l1_reweight import L1ReweightOperator
 from kremetart.operators.tikhonov import TikhonovOperator
 from kremetart.operators.web_sink import WebStreamSinkOperator
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
-from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder
+from kremetart.utils.healpix_viz import UNITS, LatestFrameHolder, stream_names
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.rephasing import common_phase_direction
@@ -58,7 +58,7 @@ class SmooviePipeline(hs.core.Application):
         apply_beam: bool = True,
         ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
         l2: float = 0.01,
-        l1: float = 0.01,
+        l1: float | None = None,
         holder: LatestFrameHolder | None = None,
         **kwargs,
     ):
@@ -107,16 +107,19 @@ class SmooviePipeline(hs.core.Application):
             apply_beam=self.apply_beam,
             ground_plane_diameter=self.ground_plane_diameter,
         )
-        l1 = L1ReweightOperator(
-            self,
-            self.nside,
-            self.freqs,
-            self.l1,
-            name="l1reweight",
-            nest=self.nest,
-            apply_beam=self.apply_beam,
-            ground_plane_diameter=self.ground_plane_diameter,
-        )
+        # Reweighted-L1 (FISTA) deconvolution is opt-in: it dominates the runtime.
+        l1 = None
+        if self.l1 is not None:
+            l1 = L1ReweightOperator(
+                self,
+                self.nside,
+                self.freqs,
+                self.l1,
+                name="l1reweight",
+                nest=self.nest,
+                apply_beam=self.apply_beam,
+                ground_plane_diameter=self.ground_plane_diameter,
+            )
         iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
         writer = HealpixWriterOperator(
             self,
@@ -125,12 +128,10 @@ class SmooviePipeline(hs.core.Application):
             name="writer",
             output_dataset=self.output_zarr,
             out_times=self.out_times,
-            var_specs=(
-                ("dirty", "dirty"),
-                ("tikhonov", "tikhonov"),
-                ("l1", "l1"),
-                ("filtered", "filtered"),
-                ("znorm", "znorm"),
+            var_specs=tuple(
+                (name, name)
+                for name in ("dirty", "tikhonov", "l1", "filtered", "znorm")
+                if name != "l1" or l1 is not None
             ),
         )
 
@@ -145,11 +146,12 @@ class SmooviePipeline(hs.core.Application):
                 ("time", "time"),
             },
         )
-        # Both deconvolvers share the imager dirty (the RHS) and the reader geometry that builds H.
+        # The deconvolvers share the imager dirty (the RHS) and the reader geometry that builds H.
         self.add_flow(imager, tikhonov, {("cube", "cube"), ("time_out", "time_out")})
-        self.add_flow(imager, l1, {("cube", "cube")})
         self.add_flow(reader, tikhonov, {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")})
-        self.add_flow(reader, l1, {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")})
+        if l1 is not None:
+            self.add_flow(imager, l1, {("cube", "cube")})
+            self.add_flow(reader, l1, {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")})
         # Only the Tikhonov stream is smoothed by the IWP (its passthrough cube is the tikhonov channel).
         self.add_flow(tikhonov, iwp, {("cube", "cube"), ("time_out", "time_out")})
 
@@ -161,17 +163,19 @@ class SmooviePipeline(hs.core.Application):
             {("cube", "tikhonov"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
         )
         self.add_flow(tikhonov, writer, {("dirty", "dirty")})
-        self.add_flow(l1, writer, {("cube", "l1")})
+        if l1 is not None:
+            self.add_flow(l1, writer, {("cube", "l1")})
 
         if self.holder is not None:
-            sink = WebStreamSinkOperator(self, name="websink", holder=self.holder)
+            sink = WebStreamSinkOperator(self, name="websink", holder=self.holder, names=stream_names(self.l1))
             self.add_flow(
                 iwp,
                 sink,
                 {("cube", "tikhonov"), ("filtered", "smooth"), ("znorm", "znorm"), ("time_out", "time_out")},
             )
             self.add_flow(tikhonov, sink, {("dirty", "dirty")})
-            self.add_flow(l1, sink, {("cube", "l1")})
+            if l1 is not None:
+                self.add_flow(l1, sink, {("cube", "l1")})
 
 
 def image_via_app(
@@ -190,14 +194,14 @@ def image_via_app(
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
     l2: float = 0.01,
-    l1: float = 0.01,
+    l1: float | None = None,
 ) -> Path:
     """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
 
     Runs the host prepare-step into a temp zarr, then streams it through :class:`SmooviePipeline`
-    (reader -> imager -> tikhonov + l1 in parallel -> IWP (Tikhonov stream only) -> writer, plus a
-    web sink when ``holder`` is given). The pipeline always images dirty / Tikhonov / L1 in every
-    frame. Persists ``dirty``/``tikhonov``/``l1``/``filtered``/``znorm`` to ``output_zarr`` and
+    (reader -> imager -> tikhonov (+ l1 in parallel when enabled) -> IWP (Tikhonov stream only) ->
+    writer, plus a web sink when ``holder`` is given). Persists ``dirty``/``tikhonov``/``filtered``/
+    ``znorm`` (plus ``l1`` when enabled) to ``output_zarr`` and
     returns its path. This is the single imaging seam :func:`smoovie` drives; host-wiring tests
     stub it.
 
@@ -216,8 +220,9 @@ def image_via_app(
         ground_plane_diameter: Airy aperture (ground plane) diameter in metres.
         l2: Tikhonov regularisation strength as a fraction of Σw (lambda = l2 * Σw, default 0.01).
             See ``scripts/compare_regularisers.py`` for guidance on tuning.
-        l1: Reweighted-L1 (FISTA) regularisation strength as a fraction of Σw (default 0.01).
-            Both ``l2`` and ``l1`` are independent; the IWP smooths the Tikhonov stream.
+        l1: Reweighted-L1 (FISTA) regularisation strength as a fraction of Σw. ``None`` (default)
+            disables the L1 deconvolver, which dominates the runtime; pass e.g. ``0.01`` to enable it.
+            ``l2`` and ``l1`` are independent; the IWP smooths the Tikhonov stream.
 
     Returns:
         The ``output_zarr`` path.
@@ -280,7 +285,7 @@ def smoovie(
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
     l2: float = 0.01,
-    l1: float = 0.01,
+    l1: float | None = None,
     overwrite: bool = False,
     nframes: int | None = None,
     serve: bool = True,
@@ -293,12 +298,13 @@ def smoovie(
     direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local zenith
     RA/Dec at the global mid-time (:func:`common_phase_direction`); supplying only one raises
     ``ValueError``. Writes ``output`` (a ``(TIME, PIX)`` zarr holding ``dirty``/``tikhonov``/
-    ``l1``/``filtered``/``znorm``); raises ``FileExistsError`` if it exists unless
+    ``filtered``/``znorm``, plus ``l1`` when enabled); raises ``FileExistsError`` if it exists unless
     ``overwrite=True``.
 
-    The pipeline **always** images dirty / Tikhonov / L1 in every frame. ``l2`` and ``l1`` set the
-    Tikhonov (CG) and reweighted-L1 (FISTA) regularisation strengths respectively, each as a
-    fraction of the per-frame weight sum (``lambda = strength * Σw``; defaults ``0.01`` — see
+    The pipeline images dirty and Tikhonov in every frame, and reweighted-L1 only when ``l1`` is set
+    (off by default: FISTA dominates the runtime). ``l2`` and ``l1`` set the Tikhonov (CG) and
+    reweighted-L1 (FISTA) regularisation strengths respectively, each as a fraction of the per-frame
+    weight sum (``lambda = strength * Σw``; ``l2`` defaults to ``0.01`` — see
     ``scripts/compare_regularisers.py`` for guidance). The IWP-Kalman filter smooths the Tikhonov
     stream; ``filtered`` and ``znorm`` therefore track Tikhonov.
 
@@ -341,8 +347,9 @@ def smoovie(
     server = None
     url = None
     if serve:
-        holder = LatestFrameHolder(NAMES)
-        server = FrameServer(holder, nside=nside, nest=True, names=NAMES, units=UNITS, port=port, tracks=tracks)
+        names = stream_names(l1)
+        holder = LatestFrameHolder(names)
+        server = FrameServer(holder, nside=nside, nest=True, names=names, units=UNITS, port=port, tracks=tracks)
         url = server.start()
         print(f"kremetart live view: {url}")
         if open_browser:

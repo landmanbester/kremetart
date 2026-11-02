@@ -76,9 +76,9 @@ cabs:
         default: 0.01
       l1:
         info:
-          Reweighted-L1 deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).
-        dtype: float
-        default: 0.01
+          Reweighted-L1 (FISTA) deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).
+          Off by default because it dominates the runtime; pass a value such as 0.01 to enable it.
+        dtype: Optional[float]
       overwrite:
         info:
           Overwrite the output zarr if it already exists.

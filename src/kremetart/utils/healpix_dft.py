@@ -6,8 +6,8 @@ unit vectors (direction cosines); the dirty-map kernel is the bare geometric del
 HEALPix grid is equal-area). See docs/superpowers/specs/2026-06-15-healpix-dft-operator-design.md.
 
 The math is ``xp``-injectable: pass ``xp=numpy`` (CPU tests) or ``xp=cupy`` (GPU pipeline).
-Only the per-frame frame-rotation ``C(t)`` is computed on the host with astropy (O(n_time)),
-exactly the host/device split used in :mod:`kremetart.utils.rephasing`.
+Only the per-frame frame-rotation ``C(t)`` is computed on the host, with pyerfa via tart-msv4
+(O(n_time)), the same host/device split as :mod:`kremetart.utils.rephasing`.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from __future__ import annotations
 from types import ModuleType
 
 import numpy as np
+from tart_msv4 import geometry as tart_geometry
 
 LIGHTSPEED = 299792458.0
 
@@ -172,37 +173,26 @@ def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
     """Per-timestamp ICRS->ITRS rotation matrices R(t), shape (n_time, 3, 3) (host, O(n_time)).
 
     Column ``i`` of ``R(t)`` is the ITRS image of the ``i``-th ICRS axis, so
-    ``s_itrs(t) = R(t) @ s_icrs``. The axes are transformed as unit-sphere directions (no distance)
-    via the same astropy path as :func:`kremetart.utils.rephasing._itrs_unit_vectors`, folding in
-    frame bias, precession, nutation and Earth rotation.
+    ``s_itrs(t) = R(t) @ s_icrs``. Computed with pyerfa via tart-msv4 (IAU 2006/2000A ``c2t06a``):
+    frame bias, precession, nutation and Earth rotation, with UT1 = UTC and polar motion neglected.
 
     This is a *pure rotation* (the design's ``C(t)`` = latitude tilt then rotation about the polar
-    axis by LST). It therefore reproduces the full ICRS->ITRS source transform only up to stellar
-    aberration -- the non-rotational ICRS<->GCRS term (~20 arcsec) cannot be captured by any single
-    matrix -- which is negligible against the ~0.9 deg HEALPix pixel.
+    axis by LST). It omits stellar aberration -- the non-rotational ICRS<->GCRS term (~20 arcsec), which
+    no single matrix can capture -- negligible against the ~0.9 deg HEALPix pixel (<= 0.33 mm on
+    TART's longest baseline versus astropy's full direction transform).
     """
-    import astropy.units as u
-    from astropy.coordinates import ICRS, ITRS, UnitSphericalRepresentation
-    from astropy.time import Time
-
-    tt = Time(np.asarray(times), format="unix", scale="utc")
-    # The three ICRS axes (+x, +y, +z) as directions at infinity.
-    axes = ICRS(UnitSphericalRepresentation(lon=[0.0, 90.0, 0.0] * u.deg, lat=[0.0, 0.0, 90.0] * u.deg))
-    mats = np.empty((tt.size, 3, 3), dtype=np.float64)
-    for k in range(tt.size):
-        itrs = axes.transform_to(ITRS(obstime=tt[k]))
-        mats[k] = itrs.cartesian.xyz.value  # (component, axis) -> columns of R(t)
-    return mats
+    return tart_geometry.celestial_to_terrestrial(np.atleast_1d(np.asarray(times, dtype=np.float64)))
 
 
 def zenith_icrs_vectors(times, lat_deg: float, lon_deg: float, alt_m: float) -> np.ndarray:
-    """Instantaneous-zenith ICRS unit vectors at each timestamp (host, astropy; ``O(n_time)``).
+    """Instantaneous-zenith ICRS unit vectors at each timestamp (host, pyerfa; ``O(n_time)``).
 
     These are the antenna-boresight directions for the Airy primary beam: the site local zenith
-    (``AltAz`` alt=90 deg) expressed as a unit vector in the same equatorial ICRS frame as
-    :func:`make_pixel_grid`, so that ``pix_vec @ boresight`` is the cosine of each pixel's zenith
-    angle. Precomputed per frame by the host prepare-step and applied on the GPU by the imager,
-    mirroring the ``b_rot`` host/device split.
+    expressed as a unit vector in the same equatorial ICRS frame as :func:`make_pixel_grid`, so that
+    ``pix_vec @ boresight`` is the cosine of each pixel's zenith angle. Precomputed per frame by the
+    host prepare-step and applied on the GPU by the imager, mirroring the ``b_rot`` host/device split.
+    Uses the same zenith (ra, dec) as tart-msv4's ``FIELD_PHASE_CENTER_DIRECTION`` (pyerfa ``atoc13``,
+    UT1 = UTC), which agrees with astropy's ``AltAz -> ICRS`` to < 0.5 arcsec.
 
     Args:
         times: ``(n_time,)`` unix-second timestamps.
@@ -213,14 +203,13 @@ def zenith_icrs_vectors(times, lat_deg: float, lon_deg: float, alt_m: float) -> 
     Returns:
         ``(n_time, 3)`` array of ICRS unit vectors of the site zenith.
     """
-    import astropy.units as u
-    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-    from astropy.time import Time
+    times = np.atleast_1d(np.asarray(times, dtype=np.float64))
+    ra, dec = tart_geometry.zenith_radec(times, lat_deg, lon_deg, alt_m)
+    return radec_to_unit_vectors(ra, dec)
 
-    loc = EarthLocation(lat=lat_deg * u.deg, lon=lon_deg * u.deg, height=alt_m * u.m)
-    tt = Time(np.asarray(times), format="unix", scale="utc")
-    zen = SkyCoord(AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=tt, location=loc)).icrs
-    ra, dec = zen.ra.rad, zen.dec.rad
+
+def radec_to_unit_vectors(ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
+    """Return ``(n, 3)`` ICRS unit vectors for (ra, dec) in radians."""
     return np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=1)
 
 
@@ -230,7 +219,8 @@ def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp:
     Args:
         itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (e.g. from rephasing's ``itrs_baselines``).
         times: ``(n_time,)`` unix-second timestamps.
-        backend: ``"astropy"`` (the oracle, host-side) or ``"native"`` (GPU polynomial; later phase).
+        backend: ``"astropy"`` (host-side rotation matrices; computed with pyerfa via tart-msv4 since the
+            port, the name is kept for compatibility) or ``"native"`` (GPU polynomial; later phase).
         xp: Array module for the returned array.
 
     Returns:

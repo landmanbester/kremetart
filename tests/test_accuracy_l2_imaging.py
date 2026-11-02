@@ -7,7 +7,6 @@ import xarray as xr
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.healpix_dft import equatorial_baselines, image_frame, make_pixel_grid
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 from tests.accuracy_helpers import (
     analytic_offset,
     angular_offset,
@@ -30,7 +29,7 @@ ELS_DEG = np.array([15.0, 35.0, 55.0, 75.0])  # horizon -> near zenith
 
 @pytest.fixture(scope="module")
 def setup(ref_hdf, ref_ms_nocal):
-    ours_part = partition_datatree(read_hdf_as_msv4(ref_hdf))
+    ours_part = partition_datatree(xr.open_datatree(ref_hdf, engine="tart"))
     enu, lat, lon, alt = antenna_enu_and_site(ours_part)
     a1, a2 = baseline_index_arrays(ours_part)
     truth_pos = enu_to_ecef_truth(enu, lat, lon, alt)
