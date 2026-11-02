@@ -8,13 +8,14 @@ Read this when editing `src/kremetart/**`.
 |---|---|---|
 | `cli.py` | The Typer app: one thin function per command, forwarding its options to `core`. | `core` (inside the command, so `kremetart --help` stays fast). |
 | `core/` | Host orchestration of a command (validation, data preparation, catalog, web server, profiling) and the **runners** that drive the stages (see Runners). | `imaging`, `utils`; `operators` from `holoscan_runner.py` only. |
+| `blocks/` | CyberEther **adapters**: one class per Python block (a stage, the snapshot source, the map-store sink), built from a JSON config inside the CyberEther process. | `imaging`, `utils`. |
 | `operators/` | Holoscan **adapters** (receive arrays from ports, build a `Snapshot`, call a stage, emit arrays), plus the zarr reader/writer and the web sink. | `imaging`, `utils`. |
 | `imaging/` | The `Snapshot`, the `SkyGrid`, the four **stages** (dirty imager, Tikhonov solver, L1 solver, IWP filter) and the `SnapshotImager` that chains them. All `xp`-injectable. | `opt`, `utils`. |
 | `opt/` | Generic solvers (CG, FISTA), `xp`-injectable. | itself. |
 | `utils/` | Host helpers: sky geometry, HDF preparation, calibration and gains, satellites, the map store, the web server and frame encoding. | itself. |
 | `static/` | The three.js web viewer. | |
 
-Dependencies point one way, down this chain: `cli → core → operators → imaging → {opt, utils}`, with
+Dependencies point one way, down this chain: `cli → core → {operators, blocks} → imaging → {opt, utils}`, with
 `core` also using `imaging` and `utils`. A helper that a lower package needs moves down into that package under a
 public name (`python-standards.md` §5).
 
@@ -39,11 +40,27 @@ in `core/settings.py`. Adapters:
 |---|---|---|
 | Loop runner: `SnapshotImager` in a Python loop, `xp` injectable (NumPy by default) | `core/loop_runner.py` | no usable CUDA device |
 | Holoscan graph, one operator per stage | `core/holoscan_runner.py` | `core.runner.cuda_available()` |
+| CyberEther flowgraph, one Python block per stage, in a `cyberether --headless` subprocess | `core/cyberether_runner.py` | not selected automatically yet |
 
-`core.runner.select_runner` makes the choice; the CyberEther runner will be a third adapter. Every
+`core.runner.select_runner` makes the choice between the first two. Every
 runner yields the same maps (`tests/test_runners.py`), so output-format and naming changes go in the
 shared map store and frame publishing, not in a runner. Only `holoscan_runner.py` imports `holoscan`
 or `operators/`; every other `core` module stays importable without a GPU.
+
+### The CyberEther runner
+
+It writes the flowgraph YAML (each block's code is a stub that builds a `blocks/` adapter), runs it on
+this interpreter (`--python-runtime`), and follows the sink's progress file. CyberEther quirks it
+handles, each recorded where it is handled in `core/cyberether_runner.py`:
+
+- Importing pyarrow, dask or astropy while CyberEther loads block code hangs it, so adapters are built on
+  the first compute cycle.
+- The AppImages bundle CUDA 12's NVRTC; the runner preloads the CUDA 13 NVRTC from this interpreter's
+  `nvidia` wheels.
+- A failing block, or a rejected flowgraph, does not stop CyberEther: block stubs record tracebacks and
+  the runner fails on them and on `[ERROR]` log lines.
+- The graph has no end-of-stream: the source returns `SKIP` when done and the runner ends the process
+  (SIGTERM) once the sink reports the last snapshot.
 
 ## Commands
 

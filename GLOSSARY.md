@@ -73,7 +73,7 @@ _Avoid_: pipeline, frame imager
 **Runner**:
 What drives the stages over a stream of snapshots, in time order, and delivers every map to the map
 store and the live viewer. The loop runner does this in-process on the CPU; a streaming runtime
-(Holoscan, later CyberEther) does it as a graph with one stage per node. Every runner yields the same
+(Holoscan, CyberEther) does it as a graph with one stage per node. Every runner yields the same
 maps.
 _Avoid_: backend, app, engine
 

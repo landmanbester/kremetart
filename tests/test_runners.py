@@ -19,17 +19,9 @@ from kremetart.core.loop_runner import run_loop
 from kremetart.core.runner import select_runner
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import LatestFrameHolder
-from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
-
-NFRAMES = 3
+from tests.conftest import PREPARED_NFRAMES as NFRAMES
 
 requires_gpu = pytest.mark.skipif(not runner_module.cuda_available(), reason="requires a CUDA device + holoscan")
-
-
-@pytest.fixture(scope="module")
-def prepared(hdf_paths: list[Path], tmp_path_factory: pytest.TempPathFactory) -> Path:
-    path = tmp_path_factory.mktemp("prepared") / "prepared.zarr"
-    return prepare_msv4_zarr(hdf_paths, path, correct_gains=True, nframes=NFRAMES)
 
 
 def test_select_runner_without_gpu_is_the_loop_runner(monkeypatch: pytest.MonkeyPatch) -> None:

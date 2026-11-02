@@ -19,6 +19,7 @@ These are gated so the default suite runs on CPU-only CI runners:
 | Test | Runs when |
 |---|---|
 | Holoscan/CuPy tests (Holoscan runner in `test_runners.py`, fan-out in `test_serve_integration.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
+| CyberEther runs in `test_cyberether_runner.py` (its CUDA case also needs a CUDA device) | `KREMETART_CYBERETHER=<AppImage>` or `cyberether` on `PATH` |
 | `test_stefcal_realdata.py` | `KREMETART_REALDATA=1` |
 | `test_calibration.py` tart2ms oracle | `KREMETART_MS_ORACLE=1` |
 | `test_imaging_parity.py` | `KREMETART_GOLDEN=<dir>` holding reference runs; `KREMETART_GOLDEN_NFRAMES` sets how many snapshots |

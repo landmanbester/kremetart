@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
+
 _DATA = Path(__file__).resolve().parent / "data"
 
 # A single zip of the entire tests/data directory, files at top level (no nesting). Extracted into
@@ -137,3 +139,15 @@ def ref_ms_nocal(data_dir: Path) -> Path:
     if not ms.exists():
         pytest.skip(f"reference nocal MS not present: {ms}")
     return ms
+
+
+# --- a prepared snapshot zarr shared by the runner tests ------------------------------------------
+
+PREPARED_NFRAMES = 3
+
+
+@pytest.fixture(scope="session")
+def prepared(hdf_paths: list[Path], tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The first ``PREPARED_NFRAMES`` gain-corrected snapshots of the test HDFs, prepared for a runner."""
+    path = tmp_path_factory.mktemp("prepared") / "prepared.zarr"
+    return prepare_msv4_zarr(hdf_paths, path, correct_gains=True, nframes=PREPARED_NFRAMES)
