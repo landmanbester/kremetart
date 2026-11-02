@@ -304,31 +304,41 @@ def _follow(
 
 
 def _environment(device: str) -> dict[str, str]:
-    """CyberEther's environment: ours, plus this interpreter's NVRTC preloaded for CUDA flowgraphs.
+    """CyberEther's environment: ours, plus a CUDA 13+ NVRTC preloaded for CUDA flowgraphs.
 
     The CyberEther AppImages bundle CUDA 12's NVRTC, which cannot compile CuPy's kernels against CUDA 13
-    headers (and does not know newer GPUs such as the DGX Spark's GB10). Preloading the NVRTC that ships
-    with this interpreter's CUDA wheels makes CuPy inside the blocks compile as it does outside.
+    headers (nor for newer GPUs such as the DGX Spark's GB10). Preloading the NVRTC that CuPy uses outside
+    CyberEther makes it compile the same way inside.
     """
     env = dict(os.environ)
-    nvrtc = _cuda_wheel_nvrtc() if device == "cuda" else None
+    nvrtc = find_nvrtc() if device == "cuda" else None
     if nvrtc is not None:
-        env["LD_PRELOAD"] = ":".join(p for p in (nvrtc, env.get("LD_PRELOAD")) if p)
+        env["LD_PRELOAD"] = ":".join(p for p in (str(nvrtc), env.get("LD_PRELOAD")) if p)
     return env
 
 
-def _cuda_wheel_nvrtc() -> str | None:
-    """The newest ``libnvrtc.so.<major>`` in this interpreter's ``nvidia`` CUDA wheels, if any."""
+def find_nvrtc() -> Path | None:
+    """The newest ``libnvrtc.so.<major>`` in the first place that has one.
+
+    Searched in order: this interpreter's ``nvidia`` CUDA wheels (what a pip-installed CuPy loads), then
+    the CUDA toolkits at ``$CUDA_PATH``, ``$CUDA_HOME`` and ``/usr/local/cuda*``.
+    """
+    roots: list[Path] = []
     spec = importlib.util.find_spec("nvidia")
-    if spec is None or not spec.submodule_search_locations:
-        return None
-    found = [
-        lib
-        for root in spec.submodule_search_locations
-        for lib in Path(root).glob("*/lib/libnvrtc.so.*")
-        if lib.name.removeprefix("libnvrtc.so.").isdigit()
-    ]
-    return str(max(found, key=lambda lib: int(lib.name.rsplit(".", 1)[-1]))) if found else None
+    if spec is not None and spec.submodule_search_locations:
+        roots += [Path(root) for root in spec.submodule_search_locations]
+    toolkits = [os.environ.get(var) for var in ("CUDA_PATH", "CUDA_HOME")]
+    roots += [Path(t) for t in toolkits if t] + sorted(Path("/usr/local").glob("cuda*"))
+    for root in roots:
+        found = [
+            lib
+            for pattern in ("*/lib/libnvrtc.so.*", "lib64/libnvrtc.so.*", "targets/*/lib/libnvrtc.so.*")
+            for lib in root.glob(pattern)
+            if lib.name.removeprefix("libnvrtc.so.").isdigit()
+        ]
+        if found:
+            return max(found, key=lambda lib: int(lib.name.rsplit(".", 1)[-1]))
+    return None
 
 
 def _stop(process: subprocess.Popen) -> None:

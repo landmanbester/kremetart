@@ -22,7 +22,7 @@ import pytest
 import xarray as xr
 
 import kremetart.core.cyberether_runner as cyberether_runner
-from kremetart.core.cyberether_runner import flowgraph, run_cyberether
+from kremetart.core.cyberether_runner import find_nvrtc, flowgraph, run_cyberether
 from kremetart.core.loop_runner import run_loop
 from kremetart.core.runner import cuda_available
 from kremetart.core.settings import ImagingSettings
@@ -76,6 +76,16 @@ def test_flowgraph_output_specs_match_the_prepared_snapshots(prepared: Path, tmp
         ("[3]", "F64"),
         ("[1]", "F64"),
     ]
+
+
+def test_find_nvrtc_takes_the_newest_from_a_cuda_toolkit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lib = tmp_path / "cuda" / "targets" / "sbsa-linux" / "lib"
+    lib.mkdir(parents=True)
+    for name in ("libnvrtc.so", "libnvrtc.so.12", "libnvrtc.so.13", "libnvrtc.so.13.0.88"):
+        (lib / name).touch()
+    monkeypatch.setattr(cyberether_runner.importlib.util, "find_spec", lambda name: None)  # no CUDA wheels
+    monkeypatch.setenv("CUDA_PATH", str(tmp_path / "cuda"))
+    assert find_nvrtc() == lib / "libnvrtc.so.13"
 
 
 def _backends() -> list:
