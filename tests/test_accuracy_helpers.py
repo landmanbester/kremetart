@@ -79,7 +79,7 @@ def test_angular_offset_basic():
 
 
 def test_recovered_direction_and_flux_single_hot_pixel():
-    from kremetart.utils.healpix_dft import make_pixel_grid
+    from kremetart.imaging.healpix import make_pixel_grid
 
     nside = 16
     pix = make_pixel_grid(nside, xp=np)
@@ -93,7 +93,7 @@ def test_recovered_direction_and_flux_single_hot_pixel():
 
 def test_recovered_direction_near_resolves_mirror():
     """With two equal peaks (source + its antipode), `near` selects the requested hemisphere."""
-    from kremetart.utils.healpix_dft import make_pixel_grid
+    from kremetart.imaging.healpix import make_pixel_grid
 
     nside = 16
     pix = make_pixel_grid(nside, xp=np)

@@ -6,7 +6,7 @@ the linear operator ``A`` and the preconditioner ``M`` are plain callables ``x -
 oriented) keep the same code running on cupy arrays without host round-trips.
 
 Used by the streaming Tikhonov imager to solve ``(H + lambda I) x = b`` per frame, where ``H`` is
-the HEALPix image-space Hessian (:func:`kremetart.utils.healpix_dft.hessian_healpix`). The optional
+the HEALPix image-space Hessian (:func:`kremetart.imaging.healpix.hessian_healpix`). The optional
 ``x0`` warm-start and ``M`` preconditioner default off so the adjointness/reference tests compare
 against the unpreconditioned, zero-initialised solution.
 """

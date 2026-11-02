@@ -8,10 +8,10 @@ voltage pattern is the classic Airy function ``A(theta) = 2 J1(x) / x`` with
 boresight). The ground plane shields the back hemisphere, so the power beam is zeroed for
 pixels below the local horizon (``cos(theta) < 0``).
 
-The beam is evaluated per frame on the equatorial HEALPix grid of :mod:`kremetart.utils.healpix_dft`:
+The beam is evaluated per frame on the equatorial HEALPix grid of :mod:`kremetart.imaging.healpix`:
 ``pix_vec`` are the same pixel unit vectors, and ``boresight`` is the antenna-zenith unit vector
 expressed in that grid frame for the frame's timestamp (deriving it from astropy is the caller's
-job, mirroring :func:`kremetart.utils.healpix_dft._icrs_to_itrs_matrices`).
+job, mirroring :func:`kremetart.utils.geometry._icrs_to_itrs_matrices`).
 
 The math is ``xp``-injectable: pass ``xp=numpy`` (CPU tests) or ``xp=cupy`` (GPU pipeline). The
 Bessel term dispatches to ``scipy.special.j1`` on the host and ``cupyx.scipy.special.j1`` on the
@@ -62,11 +62,11 @@ def airy_power_beam(
 
     Args:
         pix_vec: ``(npix, 3)`` HEALPix pixel unit vectors from
-            :func:`kremetart.utils.healpix_dft.make_pixel_grid`.
+            :func:`kremetart.imaging.healpix.make_pixel_grid`.
         boresight: ``(3,)`` antenna-zenith unit vector in the same frame as ``pix_vec`` for this
             frame's timestamp. Normalised internally.
         freqs: ``(nchan,)`` frequencies in Hz (same convention as
-            :mod:`kremetart.utils.healpix_dft`).
+            :mod:`kremetart.imaging.healpix`).
         diameter: aperture (ground plane) diameter in metres. Defaults to
             :data:`GROUND_PLANE_DIAMETER`.
         xp: array module -- ``numpy`` (CPU) or ``cupy`` (GPU).

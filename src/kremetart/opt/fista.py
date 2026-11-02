@@ -223,7 +223,7 @@ def fista_quadratic(
     """Minimise ``0.5⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|`` over real ``x`` via reweighted-L1 FISTA.
 
     For the image-space deconvolution: ``hess`` is the Hessian matvec ``x -> H x`` with
-    ``H = B Mᴴ W M B`` (:func:`kremetart.utils.healpix_dft.hessian_healpix`) and ``b`` the
+    ``H = B Mᴴ W M B`` (:func:`kremetart.imaging.healpix.hessian_healpix`) and ``b`` the
     un-normalised dirty image (the imager's normalised dirty times ``Σw``). The full least-squares
     constant ``½ yᴴ W y`` is dropped — it cancels in the backtracking test and the caller has only
     ``b``, not ``y`` — so ``info["objective"]`` is the data fit up to that additive constant plus the

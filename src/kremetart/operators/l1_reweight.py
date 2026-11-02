@@ -6,7 +6,7 @@ exposes a single output, ``cube`` (the L1 deconvolved image), wired to the write
 :class:`kremetart.core.smoovie.SmooviePipeline`. It solves ``min ½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|``
 (non-negative, sparse) with :func:`kremetart.opt.fista.fista_quadratic` instead of the Tikhonov CG
 normal-equation solve. ``H`` is the image-space Hessian
-(:func:`kremetart.utils.healpix_dft.hessian_healpix`), ``b`` the un-normalised dirty image (the
+(:func:`kremetart.imaging.healpix.hessian_healpix`), ``b`` the un-normalised dirty image (the
 imager's normalised dirty times ``Σw``), and ``λ = eta·Σw`` makes ``eta`` a frame-invariant fraction
 of the central PSF value ``Σw`` (matching the Tikhonov knob; ``smoovie`` drives it via ``--l1``). The
 Lipschitz step is seeded from the closed-form ``diag(H).max()`` that ``hessian_healpix`` returns, so
@@ -18,9 +18,9 @@ import cupy as cp
 import holoscan as hs
 from holoscan.core import Operator, OperatorSpec
 
+from kremetart.imaging.healpix import hessian_healpix, make_pixel_grid
 from kremetart.opt.fista import fista_quadratic
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
-from kremetart.utils.healpix_dft import hessian_healpix, make_pixel_grid
 
 
 class L1ReweightOperator(Operator):

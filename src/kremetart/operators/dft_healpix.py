@@ -2,7 +2,7 @@
 
 Pure cupy: consumes the per-frame equatorial-rotated baselines ``b_rot(t)`` precomputed by the host
 prepare-step (:mod:`kremetart.core.smoovie_prepare`), so there is no astropy round-trip inside
-``compute()``. Thin wrapper around :func:`kremetart.utils.healpix_dft.image_frame_prerotated`; images
+``compute()``. Thin wrapper around :func:`kremetart.imaging.healpix.image_frame_prerotated`; images
 onto a fixed full-sky equatorial HEALPix grid built once on the device.
 """
 
@@ -10,8 +10,8 @@ import cupy as cp
 import holoscan as hs
 from holoscan.core import Operator, OperatorSpec
 
+from kremetart.imaging.healpix import image_frame_prerotated, make_pixel_grid
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
-from kremetart.utils.healpix_dft import image_frame_prerotated, make_pixel_grid
 
 
 class HealpixDFTOperator(Operator):

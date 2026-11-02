@@ -67,6 +67,13 @@ command's name. This correspondence *is* the round trip — do not weaken it.
   keeps only helpers private to that one command, and (per `python-standards.md` §2) imports its
   dependencies at module top.
 
+### `imaging/` (transitional)
+
+`imaging/` holds the device-side, `xp`-injectable imaging maths and, from the stage refactor onward,
+the imaging stages (see `GLOSSARY.md` and `docs/adr/0001-independent-imaging-stages.md`). Host-side
+sky geometry stays in `utils/geometry.py`. `cli/`/`core/`/`cabs/` and hip-cargo are being retired, so
+the rules above stay in force only until that removal lands.
+
 `tests/test_structure.py` enforces the directory bijection and the signature mirror;
 `tests/test_roundtrip.py` enforces the `cli` ↔ `cab` half. If you are extending an existing command
 with substantial new machinery, that machinery lands in `utils/` / `operators/`, and `core/<cmd>.py`

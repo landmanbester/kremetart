@@ -3,8 +3,8 @@
 import numpy as np
 import xarray as xr
 
+from kremetart.imaging.healpix import image_frame, make_pixel_grid
 from kremetart.utils import partition_datatree
-from kremetart.utils.healpix_dft import image_frame, make_pixel_grid
 from kremetart.utils.rephasing import itrs_baselines
 from tests.accuracy_helpers import (
     recovered_direction_and_flux,
