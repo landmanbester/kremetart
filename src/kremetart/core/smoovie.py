@@ -28,6 +28,7 @@ from kremetart.operators.dft_healpix import HealpixDFTOperator
 from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
 from kremetart.operators.iwp_kalman import IWPKalmanOperator
 from kremetart.operators.l1_reweight import L1ReweightOperator
+from kremetart.operators.snapshot_ports import snapshot_flow
 from kremetart.operators.tikhonov import TikhonovOperator
 from kremetart.operators.web_sink import WebStreamSinkOperator
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
@@ -135,34 +136,24 @@ class SmooviePipeline(hs.core.Application):
             ),
         )
 
-        self.add_flow(
-            reader,
-            imager,
-            {
-                ("VISIBILITY", "VISIBILITY"),
-                ("WEIGHT", "WEIGHT"),
-                ("B_ROT", "B_ROT"),
-                ("BORESIGHT", "BORESIGHT"),
-                ("time", "time"),
-            },
-        )
-        # The deconvolvers share the imager dirty (the RHS) and the reader geometry that builds H.
-        self.add_flow(imager, tikhonov, {("cube", "cube"), ("time_out", "time_out")})
-        self.add_flow(reader, tikhonov, {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")})
+        # Every stage operator receives the whole snapshot; the solvers also take the dirty map.
+        self.add_flow(reader, imager, snapshot_flow())
+        self.add_flow(reader, tikhonov, snapshot_flow())
+        self.add_flow(imager, tikhonov, {("cube", "cube")})
         if l1 is not None:
+            self.add_flow(reader, l1, snapshot_flow())
             self.add_flow(imager, l1, {("cube", "cube")})
-            self.add_flow(reader, l1, {("WEIGHT", "WEIGHT"), ("B_ROT", "B_ROT"), ("BORESIGHT", "BORESIGHT")})
         # Only the Tikhonov stream is smoothed by the IWP (its passthrough cube is the tikhonov channel).
         self.add_flow(tikhonov, iwp, {("cube", "cube"), ("time_out", "time_out")})
 
-        # Durable writer: dirty (tikhonov passthrough), tikhonov model (iwp passthrough), l1 model,
+        # Durable writer: dirty (imager), tikhonov model (iwp passthrough), l1 model,
         # filtered (smoothed tikhonov), znorm.
         self.add_flow(
             iwp,
             writer,
             {("cube", "tikhonov"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
         )
-        self.add_flow(tikhonov, writer, {("dirty", "dirty")})
+        self.add_flow(imager, writer, {("cube", "dirty")})
         if l1 is not None:
             self.add_flow(l1, writer, {("cube", "l1")})
 
@@ -173,7 +164,7 @@ class SmooviePipeline(hs.core.Application):
                 sink,
                 {("cube", "tikhonov"), ("filtered", "smooth"), ("znorm", "znorm"), ("time_out", "time_out")},
             )
-            self.add_flow(tikhonov, sink, {("dirty", "dirty")})
+            self.add_flow(imager, sink, {("cube", "dirty")})
             if l1 is not None:
                 self.add_flow(l1, sink, {("cube", "l1")})
 

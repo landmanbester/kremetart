@@ -1,9 +1,10 @@
-"""Compare Tikhonov vs reweighted-L1 deconvolution on one TART frame (host/CPU).
+"""Compare Tikhonov vs reweighted-L1 deconvolution on one TART snapshot (host/CPU).
 
-Images one frame of one TART HDF three ways -- raw dirty, Tikhonov (CG on H + λI), and reweighted-L1
-(FISTA on the same H) -- at matched strength ``λ = eta·Σw``, and reports a point-source concentration
-metric over above-horizon pixels: the fraction of total flux in the brightest pixels (higher => more
-point-like => cleaner). Uses the gridless HEALPix Hessian on the CPU, so no GPU/Holoscan is needed.
+Images one snapshot of one TART HDF three ways with the imaging stages -- raw dirty, Tikhonov (CG on
+H + λI), and reweighted-L1 (FISTA on the same H) -- at matched strength ``λ = eta·Σw``, and reports a
+point-source concentration metric over above-horizon pixels: the fraction of total flux in the
+brightest pixels (higher => more point-like => cleaner). Runs on the CPU (NumPy), so no GPU/Holoscan
+is needed.
 
 Example:
 
@@ -18,11 +19,12 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from kremetart.imaging.healpix import hessian_healpix, image_frame, make_pixel_grid
-from kremetart.opt.cg import cg
-from kremetart.opt.fista import fista_quadratic
+from kremetart.imaging.dirty_imager import DirtyImager
+from kremetart.imaging.l1_solver import L1Solver
+from kremetart.imaging.sky_grid import SkyGrid
+from kremetart.imaging.snapshot import Snapshot
+from kremetart.imaging.tikhonov_solver import TikhonovSolver
 from kremetart.utils import partition_datatree
-from kremetart.utils.beam import airy_power_beam
 from kremetart.utils.geometry import equatorial_baselines, zenith_icrs_vectors
 
 
@@ -62,34 +64,37 @@ def main() -> None:
     obs = main_ds.attrs["observation_info"]
     lat, lon, alt = obs["site_latitude_deg"], obs["site_longitude_deg"], obs["site_altitude_m"]
 
-    pix = make_pixel_grid(args.nside, nest=True)
+    grid = SkyGrid.build(args.nside, nest=True, apply_beam=not args.no_beam, xp=np)
     bore = zenith_icrs_vectors(times, lat, lon, alt)
     frame = args.frame if args.frame is not None else vis.shape[0] // 2
-
-    use_beam = not args.no_beam
-    beam = airy_power_beam(pix, bore[frame], freqs) if use_beam else None
     sl = slice(frame, frame + 1)
-    dirty = image_frame(vis[sl], wgt[sl], times[sl], bl_itrs, pix, freqs, beam=beam, xp=np)  # (npix,) normalised
-
-    rows = equatorial_baselines(bl_itrs, times[sl], xp=np)[0]  # (nbl, 3) for this frame
-    w = wgt[frame]  # (nbl, nchan)
-    wsum = float(w.sum())
-    hmv, hdiag = hessian_healpix(rows, pix, freqs, w, beam=beam, xp=np)
-    b = dirty * wsum
-    lam = args.eta * wsum
-
-    x_tik = cg(lambda x: hmv(x) + lam * x, b, maxiter=100, tol=1e-5, xp=np)
-    x_l1, info = fista_quadratic(
-        hmv, b, lam=lam, positive=True, L0=float(hdiag.max()), max_reweight=args.max_reweight, xp=np
+    snapshot = Snapshot(
+        vis=vis[frame],
+        weight=wgt[frame],
+        b_rot=equatorial_baselines(bl_itrs, times[sl], xp=np)[0],
+        boresight=bore[frame],
+        time=float(times[frame]),
+        freqs=freqs,
     )
 
-    mask = pix @ bore[frame] > 0.05  # above-horizon pixels only
+    dirty = DirtyImager(grid).image(snapshot)  # (npix,) normalised
+    x_tik = TikhonovSolver(grid, eta=args.eta).solve(snapshot, dirty)
+    l1_solver = L1Solver(grid, eta=args.eta, max_reweight=args.max_reweight)
+    x_l1 = l1_solver.solve(snapshot, dirty)
+    info = l1_solver.last_info
+
+    mask = grid.pix_vec @ bore[frame] > 0.05  # above-horizon pixels only
     k = args.topk
-    print(f"{hdf.name} frame {frame}: nside={args.nside}, eta={args.eta}, Σw={wsum:.3g}, k={k}")
+    print(f"{hdf.name} frame {frame}: nside={args.nside}, eta={args.eta}, Σw={snapshot.total_weight():.3g}, k={k}")
     print(f"  top-{k} flux fraction  dirty   = {_topk_fraction(dirty, mask, k):.3f}")
     print(f"  top-{k} flux fraction  tikhonov= {_topk_fraction(x_tik, mask, k):.3f}")
     print(f"  top-{k} flux fraction  l1      = {_topk_fraction(x_l1, mask, k):.3f}   <- higher => cleaner")
-    print(f"  l1 solve: reweights={info['reweights']}, iterations={info['iterations']}, converged={info['converged']}")
+    if info is None:
+        print("  l1 solve: snapshot carries no data (all weights zero); nothing was solved")
+    else:
+        print(
+            f"  l1 solve: reweights={info['reweights']}, iterations={info['iterations']}, converged={info['converged']}"
+        )
 
 
 if __name__ == "__main__":

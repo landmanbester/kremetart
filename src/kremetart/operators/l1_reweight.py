@@ -1,134 +1,73 @@
-"""Holoscan operator: per-frame reweighted-L1 deconvolution via FISTA (GPU-resident, xp=cupy).
+"""Holoscan adapter for the L1 solver stage (:class:`kremetart.imaging.l1_solver.L1Solver`, CuPy)."""
 
-The reweighted-L1 counterpart of :class:`kremetart.operators.tikhonov.TikhonovOperator`: it shares
-the same per-frame inputs (the imager dirty plus the weights/geometry/beam that build ``H``) but
-exposes a single output, ``cube`` (the L1 deconvolved image), wired to the writer/sink ``l1`` port in
-:class:`kremetart.core.smoovie.SmooviePipeline`. It solves ``min ½⟨x,Hx⟩ − ⟨b,x⟩ + λ Σ wᵢ|xᵢ|``
-(non-negative, sparse) with :func:`kremetart.opt.fista.fista_quadratic` instead of the Tikhonov CG
-normal-equation solve. ``H`` is the image-space Hessian
-(:func:`kremetart.imaging.healpix.hessian_healpix`), ``b`` the un-normalised dirty image (the
-imager's normalised dirty times ``Σw``), and ``λ = eta·Σw`` makes ``eta`` a frame-invariant fraction
-of the central PSF value ``Σw`` (matching the Tikhonov knob; ``smoovie`` drives it via ``--l1``). The
-Lipschitz step is seeded from the closed-form ``diag(H).max()`` that ``hessian_healpix`` returns, so
-backtracking almost never fires. See
-docs/superpowers/specs/2026-06-25-reweighted-l1-deconvolution-design.md.
-"""
+from typing import Any
 
 import cupy as cp
 import holoscan as hs
-from holoscan.core import Operator, OperatorSpec
+import numpy as np
+from holoscan.core import ExecutionContext, Fragment, InputContext, Operator, OperatorSpec, OutputContext
 
-from kremetart.imaging.healpix import hessian_healpix, make_pixel_grid
-from kremetart.opt.fista import fista_quadratic
-from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
+from kremetart.imaging.l1_solver import L1Solver
+from kremetart.imaging.sky_grid import SkyGrid
+from kremetart.operators.snapshot_ports import declare_snapshot_inputs, receive_snapshot
+from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 
 
 class L1ReweightOperator(Operator):
-    """Per-frame reweighted-L1 deconvolution (sparse non-negative image) via FISTA.
+    """Snapshot plus dirty map (``cube``) in; L1 map (``cube``) out.
 
     Args:
         fragment: Holoscan fragment.
         nside: HEALPix resolution.
         freqs: ``(nchan,)`` frequencies in Hz.
-        eta: regularisation strength as a fraction of ``Σw`` (``λ = eta·Σw``); must be > 0.
-        nest: NESTED HEALPix ordering (default True).
-        apply_beam: build the Airy beam into ``H`` (must match the imager's setting).
-        ground_plane_diameter: Airy aperture diameter in metres.
-        max_iter: maximum inner FISTA iterations per reweight round.
-        tol: inner relative-change tolerance.
-        max_reweight: outer Candès–Wakin–Boyd reweighting rounds.
-        reweight_eps: ``ε`` in ``wᵢ = 1/(|xᵢ| + ε)``.
-        positive: enforce ``x >= 0`` (the sky is non-negative).
-        use_warm_start: seed each frame's FISTA with the previous frame's solution.
+        eta: regularisation strength as a fraction of the total weight.
+        nest, apply_beam, ground_plane_diameter: sky grid settings (must match the dirty imager's).
+        max_iter, tol, max_reweight, reweight_eps, positive, use_warm_start: :class:`L1Solver` options.
     """
 
     def __init__(
         self,
-        fragment,
-        nside,
-        freqs,
-        eta,
-        *args,
-        nest=True,
-        apply_beam=True,
-        ground_plane_diameter=GROUND_PLANE_DIAMETER,
-        max_iter=200,
-        tol=1e-5,
-        max_reweight=2,
-        reweight_eps=1e-3,
-        positive=True,
-        use_warm_start=True,
-        **kwargs,
-    ):
+        fragment: Fragment,
+        nside: int,
+        freqs: np.ndarray,
+        eta: float,
+        *args: Any,
+        nest: bool = True,
+        apply_beam: bool = True,
+        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+        max_iter: int = 200,
+        tol: float = 1e-5,
+        max_reweight: int = 2,
+        reweight_eps: float = 1e-3,
+        positive: bool = True,
+        use_warm_start: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        self.grid_args = dict(nest=nest, apply_beam=apply_beam, ground_plane_diameter=ground_plane_diameter)
+        self.solver_args = dict(
+            eta=eta,
+            max_iter=max_iter,
+            tol=tol,
+            max_reweight=max_reweight,
+            reweight_eps=reweight_eps,
+            positive=positive,
+            use_warm_start=use_warm_start,
+        )
         self.nside = nside
-        self.freqs = cp.asarray(freqs)
-        self.eta = float(eta)
-        self.nest = nest
-        self.apply_beam = apply_beam
-        self.ground_plane_diameter = ground_plane_diameter
-        self.max_iter = int(max_iter)
-        self.tol = float(tol)
-        self.max_reweight = int(max_reweight)
-        self.reweight_eps = float(reweight_eps)
-        self.positive = positive
-        self.use_warm_start = use_warm_start
+        self.freqs_host = freqs
         super().__init__(fragment, *args, **kwargs)
 
-    def start(self):
-        self.pix_vec = make_pixel_grid(self.nside, nest=self.nest, xp=cp)
-        self.x_prev = None  # device-resident warm-start state
+    def start(self) -> None:
+        self.freqs = cp.asarray(self.freqs_host)
+        self.stage = L1Solver(SkyGrid.build(self.nside, xp=cp, **self.grid_args), **self.solver_args)
 
-    def setup(self, spec: OperatorSpec):
-        spec.input("cube")  # imager dirty map = RHS (normalised)
-        spec.input("WEIGHT")
-        spec.input("B_ROT")
-        spec.input("BORESIGHT")
-        spec.output("cube")  # regularised image -> writer "l1" port
+    def setup(self, spec: OperatorSpec) -> None:
+        declare_snapshot_inputs(spec)
+        spec.input("cube")  # dirty map from the dirty imager
+        spec.output("cube")
 
-    def compute(self, op_input, op_output, context):
-        dirty = cp.asarray(op_input.receive("cube"))  # (1, npix)
-        weights = cp.asarray(op_input.receive("WEIGHT"))  # (1, nbl, nchan)
-        b_rot = cp.asarray(op_input.receive("B_ROT"))  # (1, nbl, 3)
-        boresight = cp.asarray(op_input.receive("BORESIGHT"))  # (1, 3)
-
-        w = weights[0]  # (nbl, nchan)
-        wsum = w.sum()
-        # Fully-flagged frame: the imager's dirty is the all-zero no-data map and λ = eta·Σw = 0, so
-        # there is nothing to solve. Pass the zero map straight through (the IWP reads it as a no-data
-        # frame and coasts); leave the warm-start untouched so the next live frame still seeds well.
-        if float(wsum) == 0.0:
-            zeros = cp.zeros(self.pix_vec.shape[0], dtype=cp.float64)
-            op_output.emit(hs.as_tensor(zeros[None, :]), "cube")
-            return
-
-        beam = None
-        if self.apply_beam:
-            beam = airy_power_beam(
-                self.pix_vec, boresight[0], self.freqs, diameter=self.ground_plane_diameter, xp=cp
-            )  # (nchan, npix)
-
-        rows = b_rot[0]  # (nbl, 3)
-        hmv, hdiag = hessian_healpix(rows, self.pix_vec, self.freqs, w, beam=beam, xp=cp)
-        b = dirty[0] * wsum  # un-normalise the imager's normalised dirty to the Hessian RHS
-        lam = self.eta * wsum
-
-        x0 = None
-        if self.use_warm_start and self.x_prev is not None and bool(cp.all(cp.isfinite(self.x_prev))):
-            x0 = self.x_prev
-
-        x, _info = fista_quadratic(
-            hmv,
-            b,
-            lam=float(lam),
-            x0=x0,
-            positive=self.positive,
-            L0=float(hdiag.max()),
-            max_iter=self.max_iter,
-            tol=self.tol,
-            max_reweight=self.max_reweight,
-            reweight_eps=self.reweight_eps,
-            xp=cp,
-        )
-        self.x_prev = x
-
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
+        snapshot = receive_snapshot(op_input, self.freqs)
+        dirty = cp.asarray(op_input.receive("cube"))[0]
+        x = self.stage.solve(snapshot, dirty)
         op_output.emit(hs.as_tensor(x[None, :]), "cube")

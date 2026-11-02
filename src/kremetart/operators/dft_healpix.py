@@ -1,80 +1,55 @@
-"""Holoscan operator: full-sky HEALPix dirty-map imager (GPU-resident, xp=cupy).
+"""Holoscan adapter for the dirty imager stage (:class:`kremetart.imaging.dirty_imager.DirtyImager`, CuPy)."""
 
-Pure cupy: consumes the per-frame equatorial-rotated baselines ``b_rot(t)`` precomputed by the host
-prepare-step (:mod:`kremetart.core.smoovie_prepare`), so there is no astropy round-trip inside
-``compute()``. Thin wrapper around :func:`kremetart.imaging.healpix.image_frame_prerotated`; images
-onto a fixed full-sky equatorial HEALPix grid built once on the device.
-"""
+from typing import Any
 
 import cupy as cp
 import holoscan as hs
-from holoscan.core import Operator, OperatorSpec
+import numpy as np
+from holoscan.core import ExecutionContext, Fragment, InputContext, Operator, OperatorSpec, OutputContext
 
-from kremetart.imaging.healpix import image_frame_prerotated, make_pixel_grid
-from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
+from kremetart.imaging.dirty_imager import DirtyImager
+from kremetart.imaging.sky_grid import SkyGrid
+from kremetart.operators.snapshot_ports import declare_snapshot_inputs, receive_snapshot
+from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 
 
 class HealpixDFTOperator(Operator):
-    """Adjoint (dirty-map) HEALPix DFT imager, pure cupy.
-
-    When ``apply_beam`` is set, the per-frame Airy primary beam is built on the GPU from the
-    streamed boresight and folded into the measurement operator, so the dirty map is the
-    beam-weighted ``B (.) (A_dft^H W vis)`` oriented toward the intrinsic sky.
+    """Snapshot in; dirty map (``cube``, ``(1, npix)``) out.
 
     Args:
         fragment: Holoscan fragment.
         nside: HEALPix resolution.
         freqs: ``(nchan,)`` frequencies in Hz.
-        nest: NESTED HEALPix ordering (default True; index locality for the streaming detector).
-        apply_beam: apply the Airy primary beam in the measurement operator (default True).
-        ground_plane_diameter: Airy aperture (ground plane) diameter in metres.
+        nest: NESTED HEALPix ordering.
+        apply_beam: fold the Airy primary beam into the measurement operator.
+        ground_plane_diameter: Airy aperture diameter in metres.
     """
 
     def __init__(
         self,
-        fragment,
-        nside,
-        freqs,
-        *args,
-        nest=True,
-        apply_beam=True,
-        ground_plane_diameter=GROUND_PLANE_DIAMETER,
-        **kwargs,
-    ):
+        fragment: Fragment,
+        nside: int,
+        freqs: np.ndarray,
+        *args: Any,
+        nest: bool = True,
+        apply_beam: bool = True,
+        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+        **kwargs: Any,
+    ) -> None:
+        self.grid_args = dict(nest=nest, apply_beam=apply_beam, ground_plane_diameter=ground_plane_diameter)
         self.nside = nside
-        self.freqs = cp.asarray(freqs)
-        self.nest = nest
-        self.apply_beam = apply_beam
-        self.ground_plane_diameter = ground_plane_diameter
+        self.freqs_host = freqs
         super().__init__(fragment, *args, **kwargs)
 
-    def start(self):
-        # Build the fixed equatorial pixel grid once, on device.
-        self.pix_vec = make_pixel_grid(self.nside, nest=self.nest, xp=cp)
+    def start(self) -> None:
+        self.freqs = cp.asarray(self.freqs_host)
+        self.stage = DirtyImager(SkyGrid.build(self.nside, xp=cp, **self.grid_args))
 
-    def setup(self, spec: OperatorSpec):
-        spec.input("VISIBILITY")
-        spec.input("WEIGHT")
-        spec.input("B_ROT")
-        spec.input("BORESIGHT")
-        spec.input("time")
+    def setup(self, spec: OperatorSpec) -> None:
+        declare_snapshot_inputs(spec)
         spec.output("cube")
-        spec.output("time_out")
 
-    def compute(self, op_input, op_output, context):
-        vis = cp.asarray(op_input.receive("VISIBILITY"))  # (1, nbl, nchan)
-        wgt = cp.asarray(op_input.receive("WEIGHT"))  # (1, nbl, nchan)
-        b_rot = cp.asarray(op_input.receive("B_ROT"))  # (1, nbl, 3)
-        boresight = cp.asarray(op_input.receive("BORESIGHT"))  # (1, 3)
-        times = cp.asarray(op_input.receive("time"))  # (1,)
-
-        beam = None
-        if self.apply_beam:
-            beam = airy_power_beam(
-                self.pix_vec, boresight[0], self.freqs, diameter=self.ground_plane_diameter, xp=cp
-            )  # (nchan, npix)
-        dmap = image_frame_prerotated(vis, wgt, b_rot, self.pix_vec, self.freqs, beam=beam, xp=cp)  # (npix,)
-
-        # Output layout: (ntime_out=1, npix) -- one dirty-map row per frame.
-        op_output.emit(hs.as_tensor(dmap[None, :]), "cube")
-        op_output.emit(hs.as_tensor(cp.mean(times, keepdims=True)), "time_out")
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
+        snapshot = receive_snapshot(op_input, self.freqs)
+        dirty = self.stage.image(snapshot)
+        op_output.emit(hs.as_tensor(dirty[None, :]), "cube")
