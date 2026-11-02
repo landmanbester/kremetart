@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame
+from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame, stream_names
 from kremetart.utils.web_server import FrameServer
 
 
@@ -126,8 +126,10 @@ def test_stream_protocol_geometry_frames_end(served):
 
 
 @pytest.mark.skipif(not _gpu(), reason="requires a CUDA device + cupy/holoscan/healpy")
-def test_fanout_populates_holder(tmp_path):
+@pytest.mark.parametrize("l1", [None, 0.01], ids=["l1-off", "l1-on"])
+def test_fanout_populates_holder(tmp_path: Path, l1: float | None) -> None:
     """Serve-mode pipeline (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
+
     data_dir = Path(__file__).resolve().parent / "data"
     hdf_paths = sorted(data_dir.glob("*.hdf"))
     if not hdf_paths:
@@ -137,13 +139,15 @@ def test_fanout_populates_holder(tmp_path):
 
     nside = 16
     npix = 12 * nside * nside
-    holder = LatestFrameHolder(NAMES)
+    names = stream_names(l1)
+    holder = LatestFrameHolder(names)
     out = tmp_path / "fanout.zarr"
 
-    image_via_app(hdf_paths, nside, output_zarr=out, holder=holder, nframes=3)
+    image_via_app(hdf_paths, nside, output_zarr=out, holder=holder, nframes=3, l1=l1)
 
     snap = holder.snapshot()
-    for name in NAMES:
+    assert set(snap) == set(names)
+    for name in names:
         assert snap[name] is not None, f"sink never populated {name!r} -- fan-out broken"
         assert len(snap[name].data) == npix * 4  # float32 little-endian, full map
     assert holder.current_seq == 2  # nframes - 1, shared seq advanced once per integration

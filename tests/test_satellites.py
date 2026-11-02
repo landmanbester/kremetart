@@ -8,9 +8,9 @@ injected ``fetch`` raises, so any cache miss fails loudly instead of hitting the
 """
 
 import numpy as np
+import xarray as xr
 
 from kremetart.utils import partition_datatree
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 from kremetart.utils.satellites import satellite_tracks
 
 
@@ -27,7 +27,7 @@ def _tracks(paths, cache, elevation, *, nframes=None):
 def test_satellite_tracks_align_with_frame_order(hdf_paths, catalog_cache, catalog_elevation):
     """Tracks are keyed by satellite and indexed by the global frame number, sorted and in range."""
     paths = hdf_paths[:2]
-    expected_frames = sum(int(partition_datatree(read_hdf_as_msv4(p)).ds.time.size) for p in paths)
+    expected_frames = sum(int(partition_datatree(xr.open_datatree(p, engine="tart")).ds.time.size) for p in paths)
 
     tracks = _tracks(paths, catalog_cache, catalog_elevation)
 
@@ -48,7 +48,7 @@ def test_satellite_tracks_radec_matches_astropy(hdf_paths, catalog_cache, catalo
     from astropy.coordinates import AltAz, EarthLocation, SkyCoord
     from astropy.time import Time
 
-    main = partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds
+    main = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart")).ds
     info = main.attrs["observation_info"]
     t0 = float(np.asarray(main.time.values)[0])
 

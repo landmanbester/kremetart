@@ -49,8 +49,8 @@ def antenna_ecef(antenna_xds) -> np.ndarray:
 
 def antenna_enu_and_site(partition):
     """Return (enu (n_ant,3), lat_deg, lon_deg, alt_m) from a kremetart partition node."""
-    ant = partition["antenna_xds"].to_dataset(inherit=False)
-    enu = np.asarray(ant.ANTENNA_POSITION_ENU.values, dtype=np.float64)
+    gains = partition["gain_xds"].to_dataset(inherit=False).isel(gain_time=0)
+    enu = np.asarray(gains.ANTENNA_POSITION_ENU.values, dtype=np.float64)
     info = partition.ds.attrs["observation_info"]
     return enu, info["site_latitude_deg"], info["site_longitude_deg"], info["site_altitude_m"]
 

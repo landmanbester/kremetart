@@ -1633,6 +1633,7 @@ full = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tart", extra = ["all"], marker = "python_full_version >= '3.11'" },
+    { name = "tart-msv4", marker = "python_full_version >= '3.11'" },
     { name = "tart-tools", marker = "python_full_version >= '3.11'" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1676,6 +1677,7 @@ requires-dist = [
     { name = "nvidia-cublas", marker = "extra == 'full'", specifier = ">=13.0,<14" },
     { name = "scipy", marker = "extra == 'full'", specifier = ">=1.15.0" },
     { name = "tart", extras = ["all"], marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=1.4.5" },
+    { name = "tart-msv4", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.1.1" },
     { name = "tart-tools", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=1.4.5" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'full'", specifier = ">=0.29.0" },
     { name = "xarray", marker = "extra == 'full'", specifier = ">=2025.0" },
@@ -3610,6 +3612,21 @@ all = [
     { name = "pyfftw", marker = "python_full_version >= '3.11'" },
     { name = "requests", marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
+name = "tart-msv4"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h5py", marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pyerfa", marker = "python_full_version >= '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/3e/e7ffa8df5f25cb2020bf4551e8168cfeafbc74658908d0a88602c2e650ba/tart_msv4-0.1.1.tar.gz", hash = "sha256:90ec27a8d1e8151bae363ca1aed7bbf07030bf3cbf3f84cc3bc5aa9a67a34558", size = 18570, upload-time = "2026-11-01T10:11:34.288Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/05/2ea8c76d9ada234ea3be53eb1272936b31f25c12682bbc7be987d4c12c93/tart_msv4-0.1.1-py3-none-any.whl", hash = "sha256:d2428e73c33a164993bbb53b38062787ade121a7d2e9038c44e1bb6e395491d1", size = 20586, upload-time = "2026-11-01T10:11:33.317Z" },
 ]
 
 [[package]]

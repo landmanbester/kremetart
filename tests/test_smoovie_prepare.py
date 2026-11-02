@@ -5,17 +5,16 @@ Uses the shared ``hdf_paths`` fixture (``conftest.py``) for the bundled TART sna
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.calibration import correct_file_gains
 
 
 def test_prepare_msv4_zarr_schema_and_shapes(tmp_path, hdf_paths):
-    import xarray as xr
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
-    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
-
-    main = partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds
+    main = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart")).ds
     n_time = int(main.time.size)
     n_bl = int(main.baseline_id.size)
 
@@ -36,12 +35,11 @@ def test_prepare_msv4_zarr_schema_and_shapes(tmp_path, hdf_paths):
 
 def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
     """BORESIGHT equals the instantaneous-zenith ICRS unit vectors and is unit-norm."""
-    import xarray as xr
 
     from kremetart.utils.healpix_dft import zenith_icrs_vectors
-    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
-    main = partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds
+    main = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart")).ds
     times = np.asarray(main.time.values)
     info = main.attrs["observation_info"]
     expected = zenith_icrs_vectors(
@@ -56,13 +54,11 @@ def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
 
 
 def test_prepare_msv4_zarr_brot_matches_equatorial_baselines(tmp_path, hdf_paths):
-    import xarray as xr
-
     from kremetart.utils.healpix_dft import equatorial_baselines
-    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
     from kremetart.utils.rephasing import itrs_baselines
 
-    node = partition_datatree(read_hdf_as_msv4(hdf_paths[0]))
+    node = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart"))
     times = np.asarray(node.ds.time.values)
     bl = np.asarray(itrs_baselines(node, np))
     expected = equatorial_baselines(bl, times, xp=np)
@@ -74,11 +70,9 @@ def test_prepare_msv4_zarr_brot_matches_equatorial_baselines(tmp_path, hdf_paths
 
 
 def test_prepare_msv4_zarr_correct_gains_matches_helper(tmp_path, hdf_paths):
-    import xarray as xr
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
-    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
-
-    node = partition_datatree(read_hdf_as_msv4(hdf_paths[0]))
+    node = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart"))
     main = node.ds
     vis = np.asarray(main.VISIBILITY.values)[..., 0]
     wgt = np.asarray(main.WEIGHT.values)[..., 0]
@@ -92,8 +86,6 @@ def test_prepare_msv4_zarr_correct_gains_matches_helper(tmp_path, hdf_paths):
 
 
 def test_prepare_msv4_zarr_nframes_caps(tmp_path, hdf_paths):
-    import xarray as xr
-
     from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
     out = tmp_path / "prepared.zarr"
@@ -103,13 +95,11 @@ def test_prepare_msv4_zarr_nframes_caps(tmp_path, hdf_paths):
 
 
 def test_prepare_msv4_zarr_nframes_crosses_file_boundary(tmp_path, hdf_paths):
-    import xarray as xr
-
-    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr, read_hdf_as_msv4
+    from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
     if len(hdf_paths) < 2:
         pytest.skip("need >=2 HDF files to cross a file boundary")
-    n0 = int(partition_datatree(read_hdf_as_msv4(hdf_paths[0])).ds.time.size)
+    n0 = int(partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart")).ds.time.size)
     cap = n0 + 2  # forces reading into the second file, then the early-break + final slice
 
     out = tmp_path / "prepared.zarr"

@@ -14,6 +14,7 @@ from kremetart.utils.healpix_viz import (
     encode_frame,
     frame_header,
     geometry_message,
+    stream_names,
     tracks_payload,
 )
 from kremetart.utils.web_server import FrameServer
@@ -223,3 +224,8 @@ def test_frame_server_defaults_to_localhost():
     holder = LatestFrameHolder(NAMES)
     server = FrameServer(holder, nside=2, nest=True, names=NAMES, port=8080)
     assert server.host == "127.0.0.1"  # localhost-only by default; no LAN exposure
+
+
+def test_stream_names_drop_l1_when_disabled() -> None:
+    assert stream_names(0.01) == NAMES
+    assert stream_names(None) == tuple(n for n in NAMES if n != "l1")

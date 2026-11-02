@@ -15,6 +15,13 @@ import numpy as np
 
 NAMES: tuple[str, ...] = ("dirty", "tikhonov", "l1", "smooth", "znorm")
 SYMMETRIC: frozenset[str] = frozenset({"znorm"})
+
+
+def stream_names(l1: float | None) -> tuple[str, ...]:
+    """The live-stream map names for a run: ``NAMES`` minus ``"l1"`` when L1 deconvolution is off."""
+    return NAMES if l1 is not None else tuple(name for name in NAMES if name != "l1")
+
+
 UNITS: dict[str, str] = {
     "dirty": "Jy/beam",
     "tikhonov": "Jy/pixel",

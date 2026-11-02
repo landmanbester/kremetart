@@ -16,13 +16,13 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+import xarray as xr
 from stefcal_calibrate import solve_file_gains
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.beam import airy_power_beam
 from kremetart.utils.gains import apply_inverse_gains
 from kremetart.utils.healpix_dft import image_frame, make_pixel_grid, zenith_icrs_vectors
-from kremetart.utils.read_tart_hdf import read_hdf_as_msv4
 
 
 def main() -> None:
@@ -37,7 +37,7 @@ def main() -> None:
     hdf = Path(args.hdf)
     cache = args.catalog_cache or str(hdf.parent / "catalog.zarr")
 
-    node = partition_datatree(read_hdf_as_msv4(hdf))
+    node = partition_datatree(xr.open_datatree(hdf, engine="tart"))
     main_ds = node.ds
     ant = node["antenna_xds"].to_dataset(inherit=False)
     names = list(ant.antenna_name.values)
@@ -53,7 +53,7 @@ def main() -> None:
     obs = main_ds.attrs["observation_info"]
     lat, lon, alt = obs["site_latitude_deg"], obs["site_longitude_deg"], obs["site_altitude_m"]
 
-    g_tart = np.asarray(node["gain_xds"].to_dataset(inherit=False).GAIN.values)
+    g_tart = np.asarray(node["gain_xds"].to_dataset(inherit=False).isel(gain_time=0).GAIN.values)
     gains_ours, _names, _ref = solve_file_gains(hdf, cache, use_beam=not args.no_beam)
     g_ours = np.where(np.isfinite(gains_ours), np.exp(1j * np.angle(gains_ours)), 0.0)  # phase-only
 
