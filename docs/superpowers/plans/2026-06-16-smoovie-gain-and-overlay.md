@@ -851,24 +851,24 @@ In `src/kremetart/cli/smoovie.py`, the signature currently has the `phase_dec_de
 `phase_dec_deg`'s `] = None,` line and the `movie:` block:
 
 ```python
-    correct_gains: Annotated[
-        bool,
-        typer.Option(
-            help="Apply the inverse per-antenna gain solution before imaging.",
-        ),
-    ] = False,
-    overlay_catalog: Annotated[
-        bool,
-        typer.Option(
-            help="Overlay TART catalog satellite tracks on each frame (requires network).",
-        ),
-    ] = False,
-    catalog_elevation_deg: Annotated[
-        float,
-        typer.Option(
-            help="Elevation cutoff (deg) for catalog sources to overlay.",
-        ),
-    ] = 45.0,
+correct_gains: Annotated[
+    bool,
+    typer.Option(
+        help="Apply the inverse per-antenna gain solution before imaging.",
+    ),
+] = (False,)
+overlay_catalog: Annotated[
+    bool,
+    typer.Option(
+        help="Overlay TART catalog satellite tracks on each frame (requires network).",
+    ),
+] = (False,)
+catalog_elevation_deg: Annotated[
+    float,
+    typer.Option(
+        help="Elevation cutoff (deg) for catalog sources to overlay.",
+    ),
+] = (45.0,)
 ```
 
 - [ ] **Step 2: Thread the params through the preflight dict**
@@ -878,9 +878,9 @@ In `src/kremetart/cli/smoovie.py`, the `preflight_remote_must_exist(smoovie, dic
 three new keys (before `movie=movie,` to keep inputs grouped):
 
 ```python
-                    correct_gains=correct_gains,
-                    overlay_catalog=overlay_catalog,
-                    catalog_elevation_deg=catalog_elevation_deg,
+correct_gains = (correct_gains,)
+overlay_catalog = (overlay_catalog,)
+catalog_elevation_deg = (catalog_elevation_deg,)
 ```
 
 - [ ] **Step 3: Thread the params through the core call**
@@ -889,9 +889,9 @@ In the `smoovie_core(...)` call, the argument list currently ends `phase_dec_deg
 movie=movie,`. Add the three keys before `movie=movie,`:
 
 ```python
-                correct_gains=correct_gains,
-                overlay_catalog=overlay_catalog,
-                catalog_elevation_deg=catalog_elevation_deg,
+correct_gains = (correct_gains,)
+overlay_catalog = (overlay_catalog,)
+catalog_elevation_deg = (catalog_elevation_deg,)
 ```
 
 - [ ] **Step 4: Thread the params through the `run_in_container` dict**
@@ -899,9 +899,9 @@ movie=movie,`. Add the three keys before `movie=movie,`:
 In the `run_in_container(smoovie, dict(...), ...)` call, add the three keys before `movie=movie,`:
 
 ```python
-            correct_gains=correct_gains,
-            overlay_catalog=overlay_catalog,
-            catalog_elevation_deg=catalog_elevation_deg,
+correct_gains = (correct_gains,)
+overlay_catalog = (overlay_catalog,)
+catalog_elevation_deg = (catalog_elevation_deg,)
 ```
 
 - [ ] **Step 5: Format and regenerate the cab**

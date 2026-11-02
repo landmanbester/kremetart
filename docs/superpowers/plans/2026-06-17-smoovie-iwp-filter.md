@@ -59,8 +59,8 @@ def test_kalman_update_keeps_covariance_symmetric_psd():
         X, P, e, S = kalman_update(X, P, y, 0.01)
     assert np.all(S > 0)
     for p in range(npix):
-        np.testing.assert_allclose(P[p], P[p].T, atol=1e-9)         # symmetric
-        assert np.all(np.linalg.eigvalsh(P[p]) >= -1e-9)            # PSD
+        np.testing.assert_allclose(P[p], P[p].T, atol=1e-9)  # symmetric
+        assert np.all(np.linalg.eigvalsh(P[p]) >= -1e-9)  # PSD
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -139,13 +139,13 @@ def kalman_update(X_pred, P_pred, y, R, *, xp: ModuleType = np):
         ``(npix, 2, 2)``, innovations ``(npix,)`` and innovation variances ``(npix,)``.
     """
     npix = X_pred.shape[0]
-    e = y - X_pred[:, 0]                       # innovation (npix,)
-    S = P_pred[:, 0, 0] + R                     # innovation variance (npix,)
-    K = P_pred[:, :, 0] / S[:, None]            # gain (npix, 2): P_pred @ H^T is column 0
+    e = y - X_pred[:, 0]  # innovation (npix,)
+    S = P_pred[:, 0, 0] + R  # innovation variance (npix,)
+    K = P_pred[:, :, 0] / S[:, None]  # gain (npix, 2): P_pred @ H^T is column 0
     X_kk = X_pred + K * e[:, None]
     # Joseph form: (I - K H) P_pred (I - K H)^T + K R K^T, with H = (1, 0).
     eye = xp.broadcast_to(xp.eye(2), (npix, 2, 2))
-    KH = K[:, :, None] * xp.asarray([1.0, 0.0])[None, None, :]   # (npix, 2, 2)
+    KH = K[:, :, None] * xp.asarray([1.0, 0.0])[None, None, :]  # (npix, 2, 2)
     ImKH = eye - KH
     P_kk = xp.einsum("pij,pjk,plk->pil", ImKH, P_pred, ImKH) + R * (K[:, :, None] * K[:, None, :])
     return X_kk, P_kk, e, S
@@ -207,10 +207,10 @@ def test_innovations_whiten_on_synthetic_iwp():
         X, P = kalman_predict(X, P, A, Q)
         X, P, e, S = kalman_update(X, P, Y[:, k], R)
         z.append(e / np.sqrt(S))
-    z = np.asarray(z[50:])                      # drop warm-up samples
+    z = np.asarray(z[50:])  # drop warm-up samples
 
     assert abs(float(z.mean())) < 0.05
-    assert 0.9 < float((z**2).mean()) < 1.1     # mean NIS ~ chi^2_1 mean = 1
+    assert 0.9 < float((z**2).mean()) < 1.1  # mean NIS ~ chi^2_1 mean = 1
 ```
 
 - [ ] **Step 2: Run test to verify it passes**
@@ -308,9 +308,9 @@ class IWPKalmanOperator(Operator):
         spec.output("time_out")
 
     def compute(self, op_input, op_output, context):
-        cube = cp.asarray(op_input.receive("cube"))      # (1, npix)
+        cube = cp.asarray(op_input.receive("cube"))  # (1, npix)
         time_out = cp.asarray(op_input.receive("time_out"))  # (1,)
-        y = cube[0]                                       # (npix,)
+        y = cube[0]  # (npix,)
         t = float(time_out[0])
 
         if self.t_prev is not None:
@@ -323,7 +323,7 @@ class IWPKalmanOperator(Operator):
         filtered = self.X[:, 0]
         znorm = e / cp.sqrt(S)
 
-        op_output.emit(hs.as_tensor(cube), "cube")                 # passthrough dirty map
+        op_output.emit(hs.as_tensor(cube), "cube")  # passthrough dirty map
         op_output.emit(hs.as_tensor(filtered[None, :]), "filtered")
         op_output.emit(hs.as_tensor(znorm[None, :]), "znorm")
         op_output.emit(hs.as_tensor(time_out), "time_out")
@@ -391,20 +391,20 @@ Replace `setup` (lines 257-259):
 Replace `compute` (lines 261-268), dropping the stale trailing comment:
 
 ```python
-    def compute(self, op_input, op_output, context):
-        cube = cp.asnumpy(cp.asarray(op_input.receive("cube")))          # (1, npix)
-        filtered = cp.asnumpy(cp.asarray(op_input.receive("filtered")))  # (1, npix)
-        znorm = cp.asnumpy(cp.asarray(op_input.receive("znorm")))        # (1, npix)
-        time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
-        dso = xr.Dataset(
-            data_vars={
-                "dirty": (("TIME", "PIX"), cube.astype(np.float32)),
-                "filtered": (("TIME", "PIX"), filtered.astype(np.float32)),
-                "znorm": (("TIME", "PIX"), znorm.astype(np.float32)),
-            },
-            coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
-        )
-        dso.to_zarr(self.output_dataset, region="auto")
+def compute(self, op_input, op_output, context):
+    cube = cp.asnumpy(cp.asarray(op_input.receive("cube")))  # (1, npix)
+    filtered = cp.asnumpy(cp.asarray(op_input.receive("filtered")))  # (1, npix)
+    znorm = cp.asnumpy(cp.asarray(op_input.receive("znorm")))  # (1, npix)
+    time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
+    dso = xr.Dataset(
+        data_vars={
+            "dirty": (("TIME", "PIX"), cube.astype(np.float32)),
+            "filtered": (("TIME", "PIX"), filtered.astype(np.float32)),
+            "znorm": (("TIME", "PIX"), znorm.astype(np.float32)),
+        },
+        coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
+    )
+    dso.to_zarr(self.output_dataset, region="auto")
 ```
 
 - [ ] **Step 4: Format + lint**
@@ -612,7 +612,7 @@ def image_via_app(
         app.run()
 
         ds = xr.open_zarr(str(output), chunks=None)  # eager load
-        dirty = np.asarray(ds["dirty"].values)        # (ntime, npix)
+        dirty = np.asarray(ds["dirty"].values)  # (ntime, npix)
         filtered = np.asarray(ds["filtered"].values)
         znorm = np.asarray(ds["znorm"].values)
         times = np.asarray(ds["TIME"].values)
@@ -701,25 +701,31 @@ Replace the imaging `stage_timer` block (251-260) with the fail-fast guard + new
 Replace the render/encode block (267-290) with the three-movie loop:
 
 ```python
-    movie_specs = [
-        (dirty, Path(movie), False),
-        (filtered, Path(str(movie) + ".filtered.mp4"), False),
-        (znorm, Path(str(movie) + ".znorm.mp4"), True),
-    ]
-    with tempfile.TemporaryDirectory() as td:
-        with stage_timer("render", timings):
-            rendered = []
-            for frames, out, diverging in movie_specs:
-                subdir = Path(td) / out.name
-                subdir.mkdir()
-                pngs = render_frames(
-                    frames, stamps, nside, cmap, subdir, rot=(phase_ra_deg, phase_dec_deg),
-                    tracks=tracks, diverging=diverging,
-                )
-                rendered.append((pngs, out))
-        with stage_timer("encode", timings):
-            for pngs, out in rendered:
-                _encode_movie(pngs[0], fps, out)
+movie_specs = [
+    (dirty, Path(movie), False),
+    (filtered, Path(str(movie) + ".filtered.mp4"), False),
+    (znorm, Path(str(movie) + ".znorm.mp4"), True),
+]
+with tempfile.TemporaryDirectory() as td:
+    with stage_timer("render", timings):
+        rendered = []
+        for frames, out, diverging in movie_specs:
+            subdir = Path(td) / out.name
+            subdir.mkdir()
+            pngs = render_frames(
+                frames,
+                stamps,
+                nside,
+                cmap,
+                subdir,
+                rot=(phase_ra_deg, phase_dec_deg),
+                tracks=tracks,
+                diverging=diverging,
+            )
+            rendered.append((pngs, out))
+    with stage_timer("encode", timings):
+        for pngs, out in rendered:
+            _encode_movie(pngs[0], fps, out)
 ```
 
 Finally, replace the profile line (292-293) so the frame count comes from `dirty`:
@@ -795,24 +801,24 @@ In `src/kremetart/cli/smoovie.py`, insert immediately after the `profile` parame
 line `    ] = False,` at 88) and before `    nframes:` (89):
 
 ```python
-    iwp_sigma: Annotated[
-        float,
-        typer.Option(
-            help="IWP driving variance (sigma^2) for the per-pixel Kalman filter.",
-        ),
-    ] = 0.001,
-    iwp_noise: Annotated[
-        float,
-        typer.Option(
-            help="Measurement-noise variance (R) for the per-pixel Kalman filter.",
-        ),
-    ] = 0.01,
-    overwrite: Annotated[
-        bool,
-        typer.Option(
-            help="Overwrite the output <movie>.zarr if it already exists.",
-        ),
-    ] = False,
+iwp_sigma: Annotated[
+    float,
+    typer.Option(
+        help="IWP driving variance (sigma^2) for the per-pixel Kalman filter.",
+    ),
+] = (0.001,)
+iwp_noise: Annotated[
+    float,
+    typer.Option(
+        help="Measurement-noise variance (R) for the per-pixel Kalman filter.",
+    ),
+] = (0.01,)
+overwrite: Annotated[
+    bool,
+    typer.Option(
+        help="Overwrite the output <movie>.zarr if it already exists.",
+    ),
+] = (False,)
 ```
 
 - [ ] **Step 2: Thread the params through all three call sites**
@@ -822,9 +828,9 @@ the `run_in_container` `dict(`), add these three lines immediately before the `n
 line in that block:
 
 ```python
-            iwp_sigma=iwp_sigma,
-            iwp_noise=iwp_noise,
-            overwrite=overwrite,
+iwp_sigma = (iwp_sigma,)
+iwp_noise = (iwp_noise,)
+overwrite = (overwrite,)
 ```
 
 (There are three such blocks; update all three. Indentation: the preflight and run_in_container
@@ -877,14 +883,12 @@ def test_image_via_app_end_to_end(hdf_paths, tmp_path):
     nside = 8
     npix = 12 * nside * nside
     out = tmp_path / "imaging.zarr"
-    dirty, filtered, znorm, stamps = image_via_app(
-        hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3
-    )
+    dirty, filtered, znorm, stamps = image_via_app(hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3)
     assert len(dirty) == len(filtered) == len(znorm) == len(stamps) == 3
     for m in (*dirty, *filtered, *znorm):
         assert m.shape == (npix,)
         assert np.all(np.isfinite(m))
-    assert out.exists()              # durable: left in place for inspection
+    assert out.exists()  # durable: left in place for inspection
     assert "UTC" in stamps[0]
 ```
 

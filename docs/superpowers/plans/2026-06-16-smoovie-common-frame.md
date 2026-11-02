@@ -238,7 +238,9 @@ def test_smoovie_honors_explicit_phase_direction(tmp_path, monkeypatch):
     _hdfs()  # need a non-empty glob; the heavy steps below are monkeypatched out
     captured = {}
 
-    monkeypatch.setattr(sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3))))
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
     def fake_render(maps, stamps, nside, cmap, outdir, *, rot=None, nest=True):
@@ -261,7 +263,9 @@ def test_smoovie_auto_phase_direction_used(tmp_path, monkeypatch):
     _hdfs()
     captured = {}
 
-    monkeypatch.setattr(sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3))))
+    monkeypatch.setattr(
+        sm, "frame_dirty_maps", lambda paths, nside, **k: ([np.zeros(12)], ["t UTC"], np.zeros((12, 3)))
+    )
     monkeypatch.setattr(sm, "common_phase_direction", lambda paths: (123.0, 45.0))
     monkeypatch.setattr(sm, "encode_movie", lambda pngs, movie, fps: Path(movie))
 
@@ -316,7 +320,9 @@ def render_frames(maps, timestamps, nside: int, cmap: str, outdir, *, rot=None, 
 Replace the `smoovie` function in `src/kremetart/core/smoovie.py` with:
 
 ```python
-def smoovie(hdf_dir, movie, nside: int = 128, fps: int = 2, cmap: str = "inferno", phase_ra_deg=None, phase_dec_deg=None):
+def smoovie(
+    hdf_dir, movie, nside: int = 128, fps: int = 2, cmap: str = "inferno", phase_ra_deg=None, phase_dec_deg=None
+):
     """Render the HDF sequence in ``hdf_dir`` to an mp4 ``movie``. Returns the movie path.
 
     Every sub-integration becomes a frame, all imaged into the common ICRS frame and centered on the
@@ -371,18 +377,18 @@ git commit -m "feat: anchor smoovie frames to a common phase direction"
 In `src/kremetart/cli/smoovie.py`, insert the two parameter blocks in the signature **between the `cmap` block and the `movie` block** (inputs must precede the output):
 
 ```python
-    phase_ra_deg: Annotated[
-        float | None,
-        typer.Option(
-            help="Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.",
-        ),
-    ] = None,
-    phase_dec_deg: Annotated[
-        float | None,
-        typer.Option(
-            help="Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.",
-        ),
-    ] = None,
+phase_ra_deg: Annotated[
+    float | None,
+    typer.Option(
+        help="Common phase-direction RA (deg, ICRS); auto from global mid-time zenith if unset.",
+    ),
+] = (None,)
+phase_dec_deg: Annotated[
+    float | None,
+    typer.Option(
+        help="Common phase-direction Dec (deg, ICRS); auto from global mid-time zenith if unset.",
+    ),
+] = (None,)
 ```
 
 Then add `phase_ra_deg=phase_ra_deg,` and `phase_dec_deg=phase_dec_deg,` (after `cmap=cmap,`, before `movie=movie,`) in **all three** call dicts: the `preflight_remote_must_exist(...)` dict, the `smoovie_core(...)` call, and the `run_in_container(...)` dict.

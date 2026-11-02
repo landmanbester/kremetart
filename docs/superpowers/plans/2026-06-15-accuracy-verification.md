@@ -572,7 +572,9 @@ def setup():
     a1, a2 = baseline_index_arrays(ours_part)
     truth_pos = enu_to_ecef_truth(enu, lat, lon, alt)
     ours_pos = antenna_ecef(ours_part["antenna_xds"].to_dataset(inherit=False))
-    tart_pos = antenna_ecef(_partition(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(inherit=False))
+    tart_pos = antenna_ecef(
+        _partition(xr.open_datatree(str(_MS), engine="xarray-ms:msv2"))["antenna_xds"].to_dataset(inherit=False)
+    )
     times = np.asarray(ours_part.ds.time.values)
     tmid = times[times.size // 2 : times.size // 2 + 1]  # single representative integration
     pix = make_pixel_grid(NSIDE, xp=np)
@@ -580,7 +582,9 @@ def setup():
         truth_bl=baselines_from_positions(truth_pos, a1, a2),
         ours_bl=baselines_from_positions(ours_pos, a1, a2),
         tart_bl=baselines_from_positions(tart_pos, a1, a2),
-        tmid=tmid, pix=pix, site=(lat, lon, alt),
+        tmid=tmid,
+        pix=pix,
+        site=(lat, lon, alt),
     )
 
 
@@ -600,19 +604,23 @@ def results(setup):
         rec_tart, _ = recovered_direction_and_flux(dmap_tart, s["pix"], NSIDE)
         brot_truth = equatorial_baselines(s["truth_bl"], s["tmid"], xp=np)[0]
         brot_tart = equatorial_baselines(s["tart_bl"], s["tmid"], xp=np)[0]
-        rows.append(dict(
-            el=el,
-            off_ours=angular_offset(rec_ours, svec[0]),
-            off_tart=angular_offset(rec_tart, svec[0]),
-            diff=angular_offset(rec_ours, rec_tart),
-            pred=analytic_offset(brot_tart, brot_truth, svec[0]),
-            flux_ratio=flux_ours / FLUX,
-        ))
+        rows.append(
+            dict(
+                el=el,
+                off_ours=angular_offset(rec_ours, svec[0]),
+                off_tart=angular_offset(rec_tart, svec[0]),
+                diff=angular_offset(rec_ours, rec_tart),
+                pred=analytic_offset(brot_tart, brot_truth, svec[0]),
+                flux_ratio=flux_ours / FLUX,
+            )
+        )
     arcmin = np.degrees(1.0) * 60.0
     print("\n el   off_ours  off_tart  diff(o-t) analytic  flux_ratio  [arcmin]")
     for r in rows:
-        print(f"{r['el']:5.0f} {r['off_ours']*arcmin:9.3f} {r['off_tart']*arcmin:9.3f} "
-              f"{r['diff']*arcmin:9.3f} {r['pred']*arcmin:9.3f} {r['flux_ratio']:10.4f}")
+        print(
+            f"{r['el']:5.0f} {r['off_ours'] * arcmin:9.3f} {r['off_tart'] * arcmin:9.3f} "
+            f"{r['diff'] * arcmin:9.3f} {r['pred'] * arcmin:9.3f} {r['flux_ratio']:10.4f}"
+        )
     return rows
 
 

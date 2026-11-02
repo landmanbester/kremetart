@@ -338,8 +338,19 @@ def fista(
         x = xp.asarray(x0, dtype=real_dtype).copy()
     w = xp.ones(x.shape, dtype=real_dtype)
     x, iters, converged, lipschitz = _fista_single(
-        A, AH, y, w, x, lam=lam, weight=weight, positive=positive,
-        L0=L0, eta=eta, max_iter=max_iter, tol=tol, xp=xp,
+        A,
+        AH,
+        y,
+        w,
+        x,
+        lam=lam,
+        weight=weight,
+        positive=positive,
+        L0=L0,
+        eta=eta,
+        max_iter=max_iter,
+        tol=tol,
+        xp=xp,
     )
     info = {
         "iterations": [iters],
@@ -398,14 +409,21 @@ def test_reweighting_debiases_sparse_recovery():
 
     x_l1, info_l1 = fista(A, AH, y, lam=0.2, positive=True, tol=1e-9, max_iter=4000)
     x_rw, info_rw = fista(
-        A, AH, y, lam=0.2, positive=True, tol=1e-9, max_iter=4000,
-        max_reweight=8, reweight_eps=1e-3,
+        A,
+        AH,
+        y,
+        lam=0.2,
+        positive=True,
+        tol=1e-9,
+        max_iter=4000,
+        max_reweight=8,
+        reweight_eps=1e-3,
     )
 
     err_l1 = np.linalg.norm(x_l1 - x_true)
     err_rw = np.linalg.norm(x_rw - x_true)
-    assert err_rw <= err_l1 + 1e-9     # reweighting never worse than plain L1
-    assert err_rw < 1e-2               # and essentially exact here
+    assert err_rw <= err_l1 + 1e-9  # reweighting never worse than plain L1
+    assert err_rw < 1e-2  # and essentially exact here
     assert info_l1["reweights"] == 0
     assert info_rw["reweights"] >= 1
     np.testing.assert_array_equal(np.where(x_rw > 1e-3)[0], [2, 7, 15])  # exact support
@@ -421,40 +439,51 @@ Expected: FAIL — `max_reweight` is ignored in Task 2, so `x_rw == x_l1` and `e
 In `src/kremetart/opt/fista.py`, replace the Task 2 `fista` body (everything after the docstring, from `y = xp.asarray(y)` to `return x, info`) with:
 
 ```python
-    y = xp.asarray(y)
-    weight = None if weight is None else xp.asarray(weight)
-    real_dtype = y.real.dtype
-    if x0 is None:
-        x = xp.zeros(AH(y).shape, dtype=real_dtype)
-    else:
-        x = xp.asarray(x0, dtype=real_dtype).copy()
-    w = xp.ones(x.shape, dtype=real_dtype)
+y = xp.asarray(y)
+weight = None if weight is None else xp.asarray(weight)
+real_dtype = y.real.dtype
+if x0 is None:
+    x = xp.zeros(AH(y).shape, dtype=real_dtype)
+else:
+    x = xp.asarray(x0, dtype=real_dtype).copy()
+w = xp.ones(x.shape, dtype=real_dtype)
 
-    iterations: list[int] = []
-    converged = False
-    lipschitz = 1.0 if L0 is None else float(L0)
-    for ell in range(max_reweight + 1):
-        x_prev_round = x.copy()
-        x, iters, converged, lipschitz = _fista_single(
-            A, AH, y, w, x, lam=lam, weight=weight, positive=positive,
-            L0=L0, eta=eta, max_iter=max_iter, tol=tol, xp=xp,
-        )
-        iterations.append(iters)
-        if ell == max_reweight:
-            break
-        w = 1.0 / (xp.abs(x) + reweight_eps)  # Candès–Wakin–Boyd reweighting
-        denom = max(float(xp.linalg.norm(x_prev_round)), 1e-12)
-        if float(xp.linalg.norm(x - x_prev_round)) / denom < reweight_tol:
-            break  # support / values have stabilised
+iterations: list[int] = []
+converged = False
+lipschitz = 1.0 if L0 is None else float(L0)
+for ell in range(max_reweight + 1):
+    x_prev_round = x.copy()
+    x, iters, converged, lipschitz = _fista_single(
+        A,
+        AH,
+        y,
+        w,
+        x,
+        lam=lam,
+        weight=weight,
+        positive=positive,
+        L0=L0,
+        eta=eta,
+        max_iter=max_iter,
+        tol=tol,
+        xp=xp,
+    )
+    iterations.append(iters)
+    if ell == max_reweight:
+        break
+    w = 1.0 / (xp.abs(x) + reweight_eps)  # Candès–Wakin–Boyd reweighting
+    denom = max(float(xp.linalg.norm(x_prev_round)), 1e-12)
+    if float(xp.linalg.norm(x - x_prev_round)) / denom < reweight_tol:
+        break  # support / values have stabilised
 
-    info = {
-        "iterations": iterations,
-        "reweights": len(iterations) - 1,
-        "objective": _objective(A, y, weight, x, lam, xp),
-        "lipschitz": lipschitz,
-        "converged": converged,
-    }
-    return x, info
+info = {
+    "iterations": iterations,
+    "reweights": len(iterations) - 1,
+    "objective": _objective(A, y, weight, x, lam, xp),
+    "lipschitz": lipschitz,
+    "converged": converged,
+}
+return x, info
 ```
 
 - [ ] **Step 4: Run the full test file to verify all pass**
@@ -504,8 +533,7 @@ def test_recover_source_fluxes_through_model_visibilities():
     el = np.radians([70.0, 40.0, 55.0])
     s = enu_direction_cosines(az, el)
     bl_enu = np.array(
-        [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [2.0, 2.0, 0.0],
-         [5.0, 1.0, 0.0], [1.0, 6.0, 0.0], [0.0, 0.0, 0.0]]
+        [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [2.0, 2.0, 0.0], [5.0, 1.0, 0.0], [1.0, 6.0, 0.0], [0.0, 0.0, 0.0]]
     )
     freqs = np.array([1.575e9])
     cols = np.stack(

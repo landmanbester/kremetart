@@ -216,25 +216,25 @@ Expected: FAIL — the zarr has only `dirty/filtered/znorm` (no `tikhonov`/`l1` 
 Replace the two `Annotated` blocks for `eta` (lines ~101-106) and `regulariser` (lines ~107-112) with:
 
 ```python
-    l2: Annotated[
-        float,
-        typer.Option(
-            help="Tikhonov (L2) deconvolution strength as a fraction of weight sum (lambda = l2 * sum w).",
-        ),
-    ] = 0.01,
-    l1: Annotated[
-        float,
-        typer.Option(
-            help="Reweighted-L1 deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).",
-        ),
-    ] = 0.01,
+l2: Annotated[
+    float,
+    typer.Option(
+        help="Tikhonov (L2) deconvolution strength as a fraction of weight sum (lambda = l2 * sum w).",
+    ),
+] = (0.01,)
+l1: Annotated[
+    float,
+    typer.Option(
+        help="Reweighted-L1 deconvolution strength as a fraction of weight sum (lambda = l1 * sum w).",
+    ),
+] = (0.01,)
 ```
 
 Then in all **three** parameter blocks — the `preflight_remote_must_exist(...)` dict, the `smoovie_core(...)` call, and the `run_in_container(...)` dict — replace the two lines `eta=eta,` and `regulariser=regulariser,` with:
 
 ```python
-                    l2=l2,
-                    l1=l1,
+l2 = (l2,)
+l1 = (l1,)
 ```
 
 (The `run_in_container` block is indented 12 spaces; match the surrounding indentation in each site.)
@@ -250,8 +250,8 @@ from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder
 (b) In `SmooviePipeline.__init__`, change the two signature lines `eta: float | None = None,` and `regulariser: str = "tikhonov",` to:
 
 ```python
-        l2: float = 0.01,
-        l1: float = 0.01,
+l2: float = (0.01,)
+l1: float = (0.01,)
 ```
 
 and change the two assignment lines `self.eta = eta` and `self.regulariser = regulariser` to:
@@ -362,22 +362,22 @@ and change the two assignment lines `self.eta = eta` and `self.regulariser = reg
 (a) In `image_via_app`, change the `eta: float | None = None,` and `regulariser: str = "tikhonov",` keyword-only params to:
 
 ```python
-    l2: float = 0.01,
-    l1: float = 0.01,
+l2: float = (0.01,)
+l1: float = (0.01,)
 ```
 
 and in the `SmooviePipeline(...)` construction inside `image_via_app`, replace `eta=eta,` and `regulariser=regulariser,` with:
 
 ```python
-            l2=l2,
-            l1=l1,
+l2 = (l2,)
+l1 = (l1,)
 ```
 
 (b) In `smoovie`, change the `eta: float | None = None,` and `regulariser: str = "tikhonov",` params to:
 
 ```python
-    l2: float = 0.01,
-    l1: float = 0.01,
+l2: float = (0.01,)
+l1: float = (0.01,)
 ```
 
 (c) In `smoovie`, the `FrameServer(...)` construction (line ~343) gains units:
@@ -389,8 +389,8 @@ and in the `SmooviePipeline(...)` construction inside `image_via_app`, replace `
 (d) In `smoovie`, the `image_via_app(...)` call (lines ~352-367) replaces `eta=eta,` and `regulariser=regulariser,` with:
 
 ```python
-                l2=l2,
-                l1=l1,
+l2 = (l2,)
+l1 = (l1,)
 ```
 
 (e) Update the `eta`/`regulariser` prose in the `smoovie` and `image_via_app` docstrings: state that the pipeline always images dirty / Tikhonov / L1, that `l2`/`l1` are the Tikhonov/reweighted-L1 strengths as fractions of `Σw` (defaults `0.01`, independent and tunable — point at `scripts/compare_regularisers.py`), and that the IWP smooths the Tikhonov stream.
