@@ -172,10 +172,10 @@ def hessian_healpix(baselines, pix_vec, freqs, weights, *, beam=None, xp: Module
 def image_frame_prerotated(vis, weights, b_rot, pix_vec, freqs, *, beam=None, xp: ModuleType = np):
     """Per-frame dirty image from already-rotated baselines (device-pure; no host astropy).
 
-    The frame rotation ``C(t)`` has already been folded into ``b_rot``; this is the pure-``xp``
-    core shared by the CPU :func:`image_frame` and the GPU
-    :class:`kremetart.operators.dft_healpix.HealpixDFTOperator`. It flattens ``(time, baseline)``
-    into the row axis and adjoint-DFTs onto the fixed grid.
+    The frame rotation ``C(t)`` has already been folded into ``b_rot``; this is the pure-``xp`` core of
+    :func:`image_frame`, imaging several timestamps into one map. It flattens ``(time, baseline)`` into
+    the row axis and adjoint-DFTs onto the fixed grid. (The streaming pipeline images one snapshot at
+    a time with :class:`kremetart.imaging.dirty_imager.DirtyImager`.)
 
     Args:
         vis: ``(n_time, nbl, nchan)`` complex residual visibilities (scalar pol).
