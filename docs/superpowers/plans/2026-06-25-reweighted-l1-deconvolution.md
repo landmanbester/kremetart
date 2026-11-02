@@ -366,8 +366,14 @@ def test_fista_quadratic_recovers_sparse_sky_through_hessian():
     b = np.real(dft_adjoint(weights * vis, bl, pix, freqs, beam=beam, xp=np))  # un-normalised dirty = Re{B Mᴴ W y}
 
     x, info = fista_quadratic(
-        hmv, b, lam=1e-3 * float(weights.sum()), positive=True, L0=float(hdiag.max()),
-        tol=1e-9, max_iter=4000, max_reweight=3,
+        hmv,
+        b,
+        lam=1e-3 * float(weights.sum()),
+        positive=True,
+        L0=float(hdiag.max()),
+        tol=1e-9,
+        max_iter=4000,
+        max_reweight=3,
     )
     assert np.all(x >= 0.0)
     # The three planted pixels are the brightest recovered, in the right flux order.
@@ -701,9 +707,9 @@ from kremetart.operators.tikhonov import TikhonovOperator
 Add the keyword (after `eta: float | None = None,` in `__init__`, ~line 57) and store it (after `self.eta = eta`, ~line 69):
 
 ```python
-        eta: float | None = None,
-        regulariser: str = "tikhonov",
-        holder: LatestFrameHolder | None = None,
+eta: float | None = (None,)
+regulariser: str = ("tikhonov",)
+holder: LatestFrameHolder | None = (None,)
 ```
 ```python
         self.eta = eta
@@ -765,12 +771,12 @@ In `smoovie`, add `regulariser: str = "tikhonov",` after `eta: float | None = No
 In the signature, after the `eta` option block (`src/kremetart/cli/smoovie.py:101-106`), insert:
 
 ```python
-    regulariser: Annotated[
-        str,
-        typer.Option(
-            help="Deconvolution regulariser when eta>0: 'tikhonov' (CG, default) or 'l1' (reweighted-L1 FISTA).",
-        ),
-    ] = "tikhonov",
+regulariser: Annotated[
+    str,
+    typer.Option(
+        help="Deconvolution regulariser when eta>0: 'tikhonov' (CG, default) or 'l1' (reweighted-L1 FISTA).",
+    ),
+] = ("tikhonov",)
 ```
 
 Then add `regulariser=regulariser,` immediately after every `eta=eta,` line in all three parameter dicts (the `preflight_remote_must_exist` dict, the `smoovie_core(...)` call, and the `run_in_container` dict).

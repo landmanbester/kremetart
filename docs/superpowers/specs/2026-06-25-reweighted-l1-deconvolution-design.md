@@ -83,17 +83,17 @@ and its tests are unchanged.
 
 ```python
 def fista_quadratic(
-    hess: Callable,              # x -> H @ x   (real x -> real H x; SPD over the reals)
-    b,                           # (n,) real RHS = the un-normalised dirty image
+    hess: Callable,  # x -> H @ x   (real x -> real H x; SPD over the reals)
+    b,  # (n,) real RHS = the un-normalised dirty image
     *,
-    lam: float,                  # λ, the L1 strength (> 0)
-    x0=None,                     # warm start; None -> zeros
-    positive: bool = True,       # non-negativity in the prox
-    L0: float | None = None,     # initial Lipschitz estimate; None -> 1.0
-    eta: float = 2.0,            # backtracking growth factor (> 1)
-    max_iter: int = 200,         # max inner FISTA iterations per reweight round
-    tol: float = 1e-5,           # inner relative-change stopping tolerance
-    max_reweight: int = 0,       # outer reweighting rounds (0 -> plain L1; the operator passes 2)
+    lam: float,  # λ, the L1 strength (> 0)
+    x0=None,  # warm start; None -> zeros
+    positive: bool = True,  # non-negativity in the prox
+    L0: float | None = None,  # initial Lipschitz estimate; None -> 1.0
+    eta: float = 2.0,  # backtracking growth factor (> 1)
+    max_iter: int = 200,  # max inner FISTA iterations per reweight round
+    tol: float = 1e-5,  # inner relative-change stopping tolerance
+    max_reweight: int = 0,  # outer reweighting rounds (0 -> plain L1; the operator passes 2)
     reweight_eps: float = 1e-3,  # ε in wᵢ = 1/(|xᵢ| + ε)
     reweight_tol: float = 1e-3,  # outer between-round relative-change stop
     xp: ModuleType = np,
@@ -144,10 +144,24 @@ two are interchangeable in `compose()`:
 `__init__` mirrors `TikhonovOperator`'s shared args and swaps the CG knobs for FISTA knobs:
 
 ```python
-def __init__(self, fragment, nside, freqs, eta, *args,
-             nest=True, apply_beam=True, ground_plane_diameter=GROUND_PLANE_DIAMETER,
-             max_iter=200, tol=1e-5, max_reweight=2, reweight_eps=1e-3,
-             positive=True, use_warm_start=True, **kwargs): ...
+def __init__(
+    self,
+    fragment,
+    nside,
+    freqs,
+    eta,
+    *args,
+    nest=True,
+    apply_beam=True,
+    ground_plane_diameter=GROUND_PLANE_DIAMETER,
+    max_iter=200,
+    tol=1e-5,
+    max_reweight=2,
+    reweight_eps=1e-3,
+    positive=True,
+    use_warm_start=True,
+    **kwargs,
+): ...
 ```
 
 `compute()` per frame (mirroring `TikhonovOperator.compute`):

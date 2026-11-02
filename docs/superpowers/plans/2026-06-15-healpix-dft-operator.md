@@ -168,6 +168,7 @@ Expected: FAIL — `cannot import name 'dft_forward'`.
 ```python
 # append to src/kremetart/utils/healpix_dft.py
 
+
 def _delay(baselines, pix_vec):
     """Geometric delay matrix b . s in metres, shape (nrow, npix)."""
     return baselines @ pix_vec.T
@@ -270,6 +271,7 @@ Expected: FAIL — `cannot import name 'dirty_map'`.
 ```python
 # append to src/kremetart/utils/healpix_dft.py
 
+
 def dirty_map(vis, weights, baselines, pix_vec, freqs, *, xp: ModuleType = np):
     """Weighted adjoint dirty map: ``Re{ adjoint(weights * vis) } / sum(weights)``.
 
@@ -358,6 +360,7 @@ Expected: FAIL — `cannot import name 'equatorial_baselines'`.
 
 ```python
 # append to src/kremetart/utils/healpix_dft.py
+
 
 def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
     """Per-timestamp ICRS->ITRS rotation matrices R(t), shape (n_time, 3, 3) (host, O(n_time)).
@@ -473,7 +476,10 @@ Expected: FAIL — `cannot import name 'image_frame'`.
 ```python
 # append to src/kremetart/utils/healpix_dft.py
 
-def image_frame(vis, weights, times, itrs_baselines, pix_vec, freqs, *, ctime_backend: str = "astropy", xp: ModuleType = np):
+
+def image_frame(
+    vis, weights, times, itrs_baselines, pix_vec, freqs, *, ctime_backend: str = "astropy", xp: ModuleType = np
+):
     """Per-frame dirty image from unstopped residual visibilities.
 
     Rotates the ITRS baselines by ``C(t)``, flattens ``(time, baseline)`` into the row axis
@@ -583,8 +589,14 @@ class HealpixDFTOperator(Operator):
         times = cp.asarray(op_input.receive("time"))  # (n_time,)
 
         dmap = image_frame(
-            vis, wgt, cp.asnumpy(times), self.itrs_baselines, self.pix_vec, self.freqs,
-            ctime_backend=self.ctime_backend, xp=cp,
+            vis,
+            wgt,
+            cp.asnumpy(times),
+            self.itrs_baselines,
+            self.pix_vec,
+            self.freqs,
+            ctime_backend=self.ctime_backend,
+            xp=cp,
         )
 
         # Output layout: (ncorr=1, ntime_out=1, nfreq_out=1, npix)

@@ -63,6 +63,7 @@ tests pass `xp=np`.
 def make_pixel_grid(nside: int, *, nest: bool = True, xp=np) -> "xp.ndarray":
     """(npix, 3) array of HEALPix pixel unit vectors via pix2vec. npix = 12*nside**2."""
 
+
 def dft_forward(image, baselines, pix_vec, freqs, *, xp=np) -> "xp.ndarray":
     """Image -> visibilities. phasesign = +1.
     image:      (npix,) real (or complex, for the adjoint test)
@@ -72,11 +73,13 @@ def dft_forward(image, baselines, pix_vec, freqs, *, xp=np) -> "xp.ndarray":
     returns:    vis (nbl, nchan) complex
     """
 
+
 def dft_adjoint(vis, baselines, pix_vec, freqs, *, xp=np) -> "xp.ndarray":
     """Visibilities -> image. phasesign = -1 (exact Hermitian transpose of dft_forward).
     vis:        (nbl, nchan) complex
     returns:    image (npix,) complex   # caller takes Re / normalizes
     """
+
 
 def dirty_map(vis, weights, baselines, pix_vec, freqs, *, xp=np) -> "xp.ndarray":
     """Convenience: Re{ dft_adjoint(weights * vis) } / sum(weights). (npix,) real.

@@ -251,39 +251,37 @@ Add to its docstring `Args:` block:
 Then replace the function body (everything from `times_unix, lat, lon, alt = _frame_times_and_site(hdf_paths)` through `return tracks`) with:
 
 ```python
-    times_unix, lat, lon, alt = _frame_times_and_site(hdf_paths)
-    if nframes is not None:
-        times_unix = times_unix[:nframes]
-    loc = EarthLocation(lat=lat * u.deg, lon=lon * u.deg, height=alt * u.m)
+times_unix, lat, lon, alt = _frame_times_and_site(hdf_paths)
+if nframes is not None:
+    times_unix = times_unix[:nframes]
+loc = EarthLocation(lat=lat * u.deg, lon=lon * u.deg, height=alt * u.m)
 
-    datestrs = [
-        datetime.datetime.fromtimestamp(float(t), tz=datetime.timezone.utc).isoformat() for t in times_unix
-    ]
+datestrs = [datetime.datetime.fromtimestamp(float(t), tz=datetime.timezone.utc).isoformat() for t in times_unix]
 
-    # Cache-aware per-frame source lists: reuse cached frames, fetch only the misses.
-    cached = _load_catalog_cache(cache_path, lat, lon, elevation_deg) if cache_path else None
-    per_frame, fetched_any = [], False
-    for datestr in datestrs:
-        if cached is not None and datestr in cached:
-            per_frame.append(cached[datestr])
-        else:
-            per_frame.append(fetch(lon, lat, datestr, elevation_deg))
-            fetched_any = True
-    if cache_path and (cached is None or fetched_any):
-        _save_catalog_cache(cache_path, datestrs, times_unix, per_frame, lat, lon, elevation_deg)
+# Cache-aware per-frame source lists: reuse cached frames, fetch only the misses.
+cached = _load_catalog_cache(cache_path, lat, lon, elevation_deg) if cache_path else None
+per_frame, fetched_any = [], False
+for datestr in datestrs:
+    if cached is not None and datestr in cached:
+        per_frame.append(cached[datestr])
+    else:
+        per_frame.append(fetch(lon, lat, datestr, elevation_deg))
+        fetched_any = True
+if cache_path and (cached is None or fetched_any):
+    _save_catalog_cache(cache_path, datestrs, times_unix, per_frame, lat, lon, elevation_deg)
 
-    # Convert az/el -> ICRS per frame and group into per-satellite tracks.
-    tracks: dict[str, list] = {}
-    for i, (t, sources) in enumerate(zip(times_unix, per_frame)):
-        if not sources:
-            continue
-        az = np.array([float(s["az"]) for s in sources])
-        el = np.array([float(s["el"]) for s in sources])
-        obstime = Time(float(t), format="unix", scale="utc")
-        icrs = SkyCoord(AltAz(az=az * u.deg, alt=el * u.deg, obstime=obstime, location=loc)).icrs
-        for src, ra, dec in zip(sources, icrs.ra.deg, icrs.dec.deg):
-            tracks.setdefault(src["name"], []).append((i, float(ra), float(dec), float(src["jy"])))
-    return tracks
+# Convert az/el -> ICRS per frame and group into per-satellite tracks.
+tracks: dict[str, list] = {}
+for i, (t, sources) in enumerate(zip(times_unix, per_frame)):
+    if not sources:
+        continue
+    az = np.array([float(s["az"]) for s in sources])
+    el = np.array([float(s["el"]) for s in sources])
+    obstime = Time(float(t), format="unix", scale="utc")
+    icrs = SkyCoord(AltAz(az=az * u.deg, alt=el * u.deg, obstime=obstime, location=loc)).icrs
+    for src, ra, dec in zip(sources, icrs.ra.deg, icrs.dec.deg):
+        tracks.setdefault(src["name"], []).append((i, float(ra), float(dec), float(src["jy"])))
+return tracks
 ```
 
 - [ ] **Step 5: Run to verify the new tests pass and the old ones still pass**
@@ -621,24 +619,24 @@ git commit -m "feat: add per-stage profiling and nframes/catalog-cache wiring to
 In `src/kremetart/cli/smoovie.py`, find the `catalog_elevation_deg` block (it ends with `] = 45.0,`) immediately followed by the `movie:` block. Insert these three blocks **between** `catalog_elevation_deg`'s `] = 45.0,` line and `    movie: Annotated[`:
 
 ```python
-    catalog_cache: Annotated[
-        str | None,
-        typer.Option(
-            help="Catalog cache zarr path; defaults to <movie>.catalog.zarr.",
-        ),
-    ] = None,
-    profile: Annotated[
-        bool,
-        typer.Option(
-            help="Print a per-stage timing summary.",
-        ),
-    ] = False,
-    nframes: Annotated[
-        int | None,
-        typer.Option(
-            help="Cap the number of frames imaged/rendered (profiling/preview aid).",
-        ),
-    ] = None,
+catalog_cache: Annotated[
+    str | None,
+    typer.Option(
+        help="Catalog cache zarr path; defaults to <movie>.catalog.zarr.",
+    ),
+] = (None,)
+profile: Annotated[
+    bool,
+    typer.Option(
+        help="Print a per-stage timing summary.",
+    ),
+] = (False,)
+nframes: Annotated[
+    int | None,
+    typer.Option(
+        help="Cap the number of frames imaged/rendered (profiling/preview aid).",
+    ),
+] = (None,)
 ```
 
 - [ ] **Step 2: Thread through the preflight dict**
@@ -646,9 +644,9 @@ In `src/kremetart/cli/smoovie.py`, find the `catalog_elevation_deg` block (it en
 In the `preflight_remote_must_exist(smoovie, dict(...))` call, the arg list has `catalog_elevation_deg=catalog_elevation_deg,` immediately before `movie=movie,` (indented 20 spaces). Insert the three keys before `movie=movie,`:
 
 ```python
-                    catalog_cache=catalog_cache,
-                    profile=profile,
-                    nframes=nframes,
+catalog_cache = (catalog_cache,)
+profile = (profile,)
+nframes = (nframes,)
 ```
 
 - [ ] **Step 3: Thread through the core call**
@@ -656,9 +654,9 @@ In the `preflight_remote_must_exist(smoovie, dict(...))` call, the arg list has 
 In the `smoovie_core(...)` call, the arg list has `catalog_elevation_deg=catalog_elevation_deg,` immediately before `movie=movie,` (indented 16 spaces). Insert the three keys before `movie=movie,`:
 
 ```python
-                catalog_cache=catalog_cache,
-                profile=profile,
-                nframes=nframes,
+catalog_cache = (catalog_cache,)
+profile = (profile,)
+nframes = (nframes,)
 ```
 
 - [ ] **Step 4: Thread through the `run_in_container` dict**
@@ -666,9 +664,9 @@ In the `smoovie_core(...)` call, the arg list has `catalog_elevation_deg=catalog
 In the `run_in_container(smoovie, dict(...), ...)` call, the arg list has `catalog_elevation_deg=catalog_elevation_deg,` immediately before `movie=movie,` (indented 12 spaces). Insert the three keys before `movie=movie,`:
 
 ```python
-            catalog_cache=catalog_cache,
-            profile=profile,
-            nframes=nframes,
+catalog_cache = (catalog_cache,)
+profile = (profile,)
+nframes = (nframes,)
 ```
 
 - [ ] **Step 5: Format, regenerate the cab, run the round-trip**

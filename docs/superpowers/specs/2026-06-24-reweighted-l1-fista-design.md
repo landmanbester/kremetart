@@ -52,24 +52,23 @@ backtracking line search estimates `L` so the caller never has to.
 
 ```python
 def fista(
-    A: Callable,                 # x -> A @ x      (real x -> complex)
-    AH: Callable,                # r -> Aᴴ @ r     (complex -> complex; real part taken internally)
-    y,                           # (m,) complex data
+    A: Callable,  # x -> A @ x      (real x -> complex)
+    AH: Callable,  # r -> Aᴴ @ r     (complex -> complex; real part taken internally)
+    y,  # (m,) complex data
     *,
-    lam: float,                  # λ, L1 regularization strength (> 0; 0 allowed -> plain LS)
-    weight=None,                 # (m,) real inverse-variance W; None -> all ones
-    x0=None,                     # warm start; None -> zeros
-    positive: bool = True,       # non-negativity in the prox
-    L0: float | None = None,     # initial Lipschitz estimate; None -> 1.0
-    eta: float = 2.0,            # backtracking growth factor (> 1)
-    max_iter: int = 500,         # max inner FISTA iterations per reweight round
-    tol: float = 1e-5,           # inner relative-change stopping tolerance
-    max_reweight: int = 0,       # outer reweighting rounds (0 -> plain L1, no reweighting)
+    lam: float,  # λ, L1 regularization strength (> 0; 0 allowed -> plain LS)
+    weight=None,  # (m,) real inverse-variance W; None -> all ones
+    x0=None,  # warm start; None -> zeros
+    positive: bool = True,  # non-negativity in the prox
+    L0: float | None = None,  # initial Lipschitz estimate; None -> 1.0
+    eta: float = 2.0,  # backtracking growth factor (> 1)
+    max_iter: int = 500,  # max inner FISTA iterations per reweight round
+    tol: float = 1e-5,  # inner relative-change stopping tolerance
+    max_reweight: int = 0,  # outer reweighting rounds (0 -> plain L1, no reweighting)
     reweight_eps: float = 1e-3,  # ε in wᵢ = 1/(|xᵢ| + ε)
     reweight_tol: float = 1e-3,  # outer stopping: relative change between rounds
-    xp: ModuleType = np,         # array module (numpy / cupy)
-) -> tuple[ndarray, dict]:
-    ...
+    xp: ModuleType = np,  # array module (numpy / cupy)
+) -> tuple[ndarray, dict]: ...
 ```
 
 Returns `(x, info)`:

@@ -92,9 +92,7 @@ def test_model_visibilities_is_flux_one_superposition():
     freqs = np.array([1.575e9])
     M = model_visibilities(s, bl, freqs)
     # equals the per-source sum with unit weights
-    per_src = np.stack(
-        [model_visibilities(s[i : i + 1], bl, freqs)[:, 0] for i in range(4)], axis=0
-    ).sum(axis=0)
+    per_src = np.stack([model_visibilities(s[i : i + 1], bl, freqs)[:, 0] for i in range(4)], axis=0).sum(axis=0)
     np.testing.assert_allclose(M[:, 0], per_src, rtol=1e-10)
 ```
 
@@ -502,9 +500,7 @@ import os
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("KREMETART_REALDATA") != "1", reason="set KREMETART_REALDATA=1 to run"
-)
+pytestmark = pytest.mark.skipif(os.environ.get("KREMETART_REALDATA") != "1", reason="set KREMETART_REALDATA=1 to run")
 
 
 def test_stefcal_phases_track_tart_snapshot(ref_hdf, catalog_cache, catalog_elevation):
@@ -529,9 +525,7 @@ def test_stefcal_phases_track_tart_snapshot(ref_hdf, catalog_cache, catalog_elev
     vis = np.asarray(main.VISIBILITY.values)[0, :, :, 0]  # (nbl, nchan), first frame
     weight = np.asarray(main.WEIGHT.values)[0, :, :, 0]
 
-    per_frame = frame_source_directions(
-        [ref_hdf], catalog_elevation, cache_path=catalog_cache, nframes=1
-    )
+    per_frame = frame_source_directions([ref_hdf], catalog_elevation, cache_path=catalog_cache, nframes=1)
     az = np.array([a for _, a, _ in per_frame[0]])
     el = np.array([e for _, _, e in per_frame[0]])
     s = enu_direction_cosines(az, el)
@@ -590,7 +584,9 @@ def frame_source_directions(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, 
     cached = _load_catalog_cache(cache_path, lat, lon, elevation_deg) if cache_path else None
     out: list[list[tuple[str, float, float]]] = []
     for datestr in datestrs:
-        sources = cached[datestr] if (cached is not None and datestr in cached) else fetch(lon, lat, datestr, elevation_deg)
+        sources = (
+            cached[datestr] if (cached is not None and datestr in cached) else fetch(lon, lat, datestr, elevation_deg)
+        )
         out.append([(str(s["name"]), np.radians(float(s["az"])), np.radians(float(s["el"]))) for s in sources])
     return out
 ```

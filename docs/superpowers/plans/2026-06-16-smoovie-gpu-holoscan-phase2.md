@@ -886,7 +886,9 @@ Edit `test_smoovie_overlay_passes_tracks` — change:
 ```
 to:
 ```python
-    sm.smoovie(hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, overlay_catalog=True, catalog_elevation_deg=30.0, use_gpu=False)
+sm.smoovie(
+    hdf_dir=_DATA, movie=tmp_path / "m.mp4", nside=1, overlay_catalog=True, catalog_elevation_deg=30.0, use_gpu=False
+)
 ```
 
 Edit `test_smoovie_profile_prints` — change:
