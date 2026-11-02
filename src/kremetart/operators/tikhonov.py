@@ -1,8 +1,11 @@
 """Holoscan adapter for the Tikhonov solver stage (:class:`kremetart.imaging.tikhonov_solver.TikhonovSolver`, CuPy)."""
 
+from typing import Any
+
 import cupy as cp
 import holoscan as hs
-from holoscan.core import Operator, OperatorSpec
+import numpy as np
+from holoscan.core import ExecutionContext, Fragment, InputContext, Operator, OperatorSpec, OutputContext
 
 from kremetart.imaging.sky_grid import SkyGrid
 from kremetart.imaging.tikhonov_solver import TikhonovSolver
@@ -24,20 +27,20 @@ class TikhonovOperator(Operator):
 
     def __init__(
         self,
-        fragment,
-        nside,
-        freqs,
-        eta,
-        *args,
-        nest=True,
-        apply_beam=True,
-        ground_plane_diameter=GROUND_PLANE_DIAMETER,
-        maxiter=100,
-        tol=1e-5,
-        use_preconditioner=True,
-        use_warm_start=True,
-        **kwargs,
-    ):
+        fragment: Fragment,
+        nside: int,
+        freqs: np.ndarray,
+        eta: float,
+        *args: Any,
+        nest: bool = True,
+        apply_beam: bool = True,
+        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+        maxiter: int = 100,
+        tol: float = 1e-5,
+        use_preconditioner: bool = True,
+        use_warm_start: bool = True,
+        **kwargs: Any,
+    ) -> None:
         self.grid_args = dict(nest=nest, apply_beam=apply_beam, ground_plane_diameter=ground_plane_diameter)
         self.solver_args = dict(
             eta=eta, maxiter=maxiter, tol=tol, use_preconditioner=use_preconditioner, use_warm_start=use_warm_start
@@ -46,17 +49,17 @@ class TikhonovOperator(Operator):
         self.freqs_host = freqs
         super().__init__(fragment, *args, **kwargs)
 
-    def start(self):
+    def start(self) -> None:
         self.freqs = cp.asarray(self.freqs_host)
         self.stage = TikhonovSolver(SkyGrid.build(self.nside, xp=cp, **self.grid_args), **self.solver_args)
 
-    def setup(self, spec: OperatorSpec):
+    def setup(self, spec: OperatorSpec) -> None:
         declare_snapshot_inputs(spec)
         spec.input("cube")  # dirty map from the dirty imager
         spec.output("cube")
         spec.output("time_out")
 
-    def compute(self, op_input, op_output, context):
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         snapshot = receive_snapshot(op_input, self.freqs)
         dirty = cp.asarray(op_input.receive("cube"))[0]
         x = self.stage.solve(snapshot, dirty)

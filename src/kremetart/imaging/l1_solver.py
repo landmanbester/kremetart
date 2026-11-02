@@ -37,7 +37,7 @@ class L1Solver:
         reweight_eps: float = 1e-3,
         positive: bool = True,
         use_warm_start: bool = True,
-    ):
+    ) -> None:
         self.grid = grid
         self.eta = float(eta)
         self.max_iter = int(max_iter)

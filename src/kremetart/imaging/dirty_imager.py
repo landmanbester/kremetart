@@ -14,7 +14,7 @@ class DirtyImager:
     map, which downstream stages read as "no data". Stateless across snapshots.
     """
 
-    def __init__(self, grid: SkyGrid):
+    def __init__(self, grid: SkyGrid) -> None:
         self.grid = grid
 
     def image(self, snapshot: Snapshot) -> Array:

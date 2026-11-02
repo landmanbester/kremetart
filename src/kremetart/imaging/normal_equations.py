@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import ModuleType
 
 from kremetart.imaging.healpix import hessian_healpix
 from kremetart.imaging.sky_grid import SkyGrid
@@ -46,7 +47,7 @@ def build_normal_equations(grid: SkyGrid, snapshot: Snapshot, dirty: Array, eta:
     return NormalEquations(hessian=hmv, diagonal=hdiag, rhs=dirty * wsum, lam=eta * wsum)
 
 
-def warm_start(previous: Array | None, enabled: bool, xp) -> Array | None:
+def warm_start(previous: Array | None, enabled: bool, xp: ModuleType) -> Array | None:
     """The previous solution as a starting point, if enabled and finite; otherwise ``None`` (cold start)."""
     if enabled and previous is not None and bool(xp.all(xp.isfinite(previous))):
         return previous

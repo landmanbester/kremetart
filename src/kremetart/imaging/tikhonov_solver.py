@@ -33,7 +33,7 @@ class TikhonovSolver:
         tol: float = 1e-5,
         use_preconditioner: bool = True,
         use_warm_start: bool = True,
-    ):
+    ) -> None:
         self.grid = grid
         self.eta = float(eta)
         self.maxiter = int(maxiter)
@@ -51,14 +51,14 @@ class TikhonovSolver:
 
         lam = eqs.lam
 
-        def a_matvec(x):
+        def a_matvec(x: Array) -> Array:
             return eqs.hessian(x) + lam * x
 
         precond = None
         if self.use_preconditioner:
             inv_mdiag = 1.0 / (eqs.diagonal + lam)
 
-            def precond(r):
+            def precond(r: Array) -> Array:
                 return r * inv_mdiag
 
         x0 = warm_start(self._x_prev, self.use_warm_start, xp)

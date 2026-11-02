@@ -89,7 +89,12 @@ def main() -> None:
     print(f"  top-{k} flux fraction  dirty   = {_topk_fraction(dirty, mask, k):.3f}")
     print(f"  top-{k} flux fraction  tikhonov= {_topk_fraction(x_tik, mask, k):.3f}")
     print(f"  top-{k} flux fraction  l1      = {_topk_fraction(x_l1, mask, k):.3f}   <- higher => cleaner")
-    print(f"  l1 solve: reweights={info['reweights']}, iterations={info['iterations']}, converged={info['converged']}")
+    if info is None:
+        print("  l1 solve: snapshot carries no data (all weights zero); nothing was solved")
+    else:
+        print(
+            f"  l1 solve: reweights={info['reweights']}, iterations={info['iterations']}, converged={info['converged']}"
+        )
 
 
 if __name__ == "__main__":

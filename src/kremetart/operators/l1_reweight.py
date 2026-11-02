@@ -1,8 +1,11 @@
 """Holoscan adapter for the L1 solver stage (:class:`kremetart.imaging.l1_solver.L1Solver`, CuPy)."""
 
+from typing import Any
+
 import cupy as cp
 import holoscan as hs
-from holoscan.core import Operator, OperatorSpec
+import numpy as np
+from holoscan.core import ExecutionContext, Fragment, InputContext, Operator, OperatorSpec, OutputContext
 
 from kremetart.imaging.l1_solver import L1Solver
 from kremetart.imaging.sky_grid import SkyGrid
@@ -24,22 +27,22 @@ class L1ReweightOperator(Operator):
 
     def __init__(
         self,
-        fragment,
-        nside,
-        freqs,
-        eta,
-        *args,
-        nest=True,
-        apply_beam=True,
-        ground_plane_diameter=GROUND_PLANE_DIAMETER,
-        max_iter=200,
-        tol=1e-5,
-        max_reweight=2,
-        reweight_eps=1e-3,
-        positive=True,
-        use_warm_start=True,
-        **kwargs,
-    ):
+        fragment: Fragment,
+        nside: int,
+        freqs: np.ndarray,
+        eta: float,
+        *args: Any,
+        nest: bool = True,
+        apply_beam: bool = True,
+        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
+        max_iter: int = 200,
+        tol: float = 1e-5,
+        max_reweight: int = 2,
+        reweight_eps: float = 1e-3,
+        positive: bool = True,
+        use_warm_start: bool = True,
+        **kwargs: Any,
+    ) -> None:
         self.grid_args = dict(nest=nest, apply_beam=apply_beam, ground_plane_diameter=ground_plane_diameter)
         self.solver_args = dict(
             eta=eta,
@@ -54,16 +57,16 @@ class L1ReweightOperator(Operator):
         self.freqs_host = freqs
         super().__init__(fragment, *args, **kwargs)
 
-    def start(self):
+    def start(self) -> None:
         self.freqs = cp.asarray(self.freqs_host)
         self.stage = L1Solver(SkyGrid.build(self.nside, xp=cp, **self.grid_args), **self.solver_args)
 
-    def setup(self, spec: OperatorSpec):
+    def setup(self, spec: OperatorSpec) -> None:
         declare_snapshot_inputs(spec)
         spec.input("cube")  # dirty map from the dirty imager
         spec.output("cube")
 
-    def compute(self, op_input, op_output, context):
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         snapshot = receive_snapshot(op_input, self.freqs)
         dirty = cp.asarray(op_input.receive("cube"))[0]
         x = self.stage.solve(snapshot, dirty)

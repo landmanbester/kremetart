@@ -20,9 +20,19 @@ A failure is investigated, not met by loosening a tolerance.
 import json
 import os
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
+import xarray as xr
+
+from kremetart.imaging.dirty_imager import DirtyImager
+from kremetart.imaging.iwp_filter import IWPFilter
+from kremetart.imaging.l1_solver import L1Solver
+from kremetart.imaging.sky_grid import SkyGrid
+from kremetart.imaging.snapshot import Snapshot
+from kremetart.imaging.snapshot_imager import SnapshotImager
+from kremetart.imaging.tikhonov_solver import TikhonovSolver
 
 GOLDEN = os.environ.get("KREMETART_GOLDEN")
 pytestmark = pytest.mark.skipif(not GOLDEN, reason="set KREMETART_GOLDEN=<dir> to run the parity check")
@@ -45,7 +55,7 @@ NUMPY_RTOL = {"dirty": 1e-5, "tikhonov": 1e-3, "l1": 1e-3, "filtered": 1e-3, "zn
 CUPY_RTOL = dict.fromkeys(PRODUCTS, 1e-6)
 
 
-def _backends():
+def _backends() -> list:
     out = [pytest.param(np, NUMPY_RTOL, id="numpy")]
     try:
         import cupy as cp
@@ -65,16 +75,9 @@ def _rel_l2(got: np.ndarray, ref: np.ndarray) -> float:
 
 @pytest.mark.parametrize("xp, rtol", _backends())
 @pytest.mark.parametrize("ref_name, meta_name, l1_overrides", RUNS, ids=[r[0] for r in RUNS])
-def test_snapshot_imager_matches_reference(xp, rtol, ref_name, meta_name, l1_overrides):
-    import xarray as xr
-
-    from kremetart.imaging.dirty_imager import DirtyImager
-    from kremetart.imaging.iwp_filter import IWPFilter
-    from kremetart.imaging.l1_solver import L1Solver
-    from kremetart.imaging.sky_grid import SkyGrid
-    from kremetart.imaging.snapshot import Snapshot
-    from kremetart.imaging.snapshot_imager import SnapshotImager
-    from kremetart.imaging.tikhonov_solver import TikhonovSolver
+def test_snapshot_imager_matches_reference(
+    xp: ModuleType, rtol: dict[str, float], ref_name: str, meta_name: str, l1_overrides: dict
+) -> None:
 
     golden = Path(GOLDEN)
     if not (golden / ref_name).exists():
@@ -108,6 +111,7 @@ def test_snapshot_imager_matches_reference(xp, rtol, ref_name, meta_name, l1_ove
                 continue
             got = got.get() if hasattr(got, "get") else np.asarray(got)
             err = _rel_l2(got, ref[ref_var].values[k].astype(np.float64))
+            assert np.isfinite(err), f"non-finite error for {ref_var} at snapshot {k}"
             if err > worst[ref_var][0]:
                 worst[ref_var] = (err, k)
 

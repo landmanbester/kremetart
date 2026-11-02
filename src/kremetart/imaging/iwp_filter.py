@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import ModuleType
+
 from kremetart.imaging.snapshot import Array
 from kremetart.utils.iwp import frame_has_observation, iwp_filter_step
 
@@ -25,7 +27,7 @@ class IWPFilter:
         xp: array module holding the state.
     """
 
-    def __init__(self, npix: int, *, sigma2: float, noise: float, xp):
+    def __init__(self, npix: int, *, sigma2: float, noise: float, xp: ModuleType) -> None:
         self.sigma2 = float(sigma2)
         self.noise = float(noise)
         self.xp = xp

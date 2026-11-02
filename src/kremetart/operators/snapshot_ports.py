@@ -1,7 +1,7 @@
 """Holoscan port plumbing for a Snapshot: the reader's five output ports <-> one :class:`Snapshot`."""
 
 import cupy as cp
-from holoscan.core import OperatorSpec
+from holoscan.core import InputContext, OperatorSpec
 
 from kremetart.imaging.snapshot import Snapshot
 
@@ -19,7 +19,7 @@ def snapshot_flow() -> set[tuple[str, str]]:
     return {(port, port) for port in SNAPSHOT_PORTS}
 
 
-def receive_snapshot(op_input, freqs: cp.ndarray) -> Snapshot:
+def receive_snapshot(op_input: InputContext, freqs: cp.ndarray) -> Snapshot:
     """Receive one snapshot (the reader emits each array with a leading length-1 time axis)."""
     vis, weight, b_rot, boresight, time = (cp.asarray(op_input.receive(port)) for port in SNAPSHOT_PORTS)
     return Snapshot(

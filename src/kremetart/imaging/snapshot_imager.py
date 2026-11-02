@@ -50,7 +50,7 @@ class SnapshotImager:
         tikhonov_solver: TikhonovSolver,
         iwp_filter: IWPFilter,
         l1_solver: L1Solver | None = None,
-    ):
+    ) -> None:
         self.dirty_imager = dirty_imager
         self.tikhonov_solver = tikhonov_solver
         self.iwp_filter = iwp_filter
