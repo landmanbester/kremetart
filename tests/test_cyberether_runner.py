@@ -1,7 +1,7 @@
 """The CyberEther runner: the flowgraph it writes, and its agreement with the loop runner.
 
 The flowgraph tests run everywhere. The run tests need CyberEther (``$KREMETART_CYBERETHER`` or
-``cyberether`` on ``PATH``) and skip otherwise; the CUDA run also needs a CUDA device. Each run costs
+``cyberether`` on ``PATH``) and skip otherwise; the CUDA run also needs a CUDA device (not Holoscan). Each run costs
 about 15 s of CyberEther start-up.
 
 Agreement tolerance: the blocks call the same stages as the loop runner on the same device and inputs,
@@ -24,7 +24,6 @@ import xarray as xr
 import kremetart.core.cyberether_runner as cyberether_runner
 from kremetart.core.cyberether_runner import find_nvrtc, flowgraph, run_cyberether
 from kremetart.core.loop_runner import run_loop
-from kremetart.core.runner import cuda_available
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import LatestFrameHolder
 from tests.conftest import PREPARED_NFRAMES
@@ -89,12 +88,16 @@ def test_find_nvrtc_takes_the_newest_from_a_cuda_toolkit(tmp_path: Path, monkeyp
 
 
 def _backends() -> list:
+    """CPU always; CUDA when CuPy sees a device (the CyberEther runner does not need Holoscan)."""
     out = [pytest.param("cpu", np, id="cpu")]
-    if cuda_available():
+    try:
         # GPU-only dependency: this module must import on CPU-only runners.
         import cupy
 
-        out.append(pytest.param("cuda", cupy, id="cuda"))
+        if cupy.cuda.runtime.getDeviceCount() > 0:
+            out.append(pytest.param("cuda", cupy, id="cuda"))
+    except Exception:
+        pass
     return out
 
 
