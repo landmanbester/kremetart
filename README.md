@@ -27,6 +27,14 @@ kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay
 
 Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
 
+Holoscan recommends a stack size of at least 32 MB and warns (and may crash on deep call stacks) below that. Most Linux shells default to 8 MB, so raise the limit in the shell before running natively:
+
+```bash
+ulimit -s 32768
+```
+
+This lasts for the current shell session, so add it to your shell profile to make it permanent. Apptainer/Singularity containers launched from that shell inherit the limit.
+
 ## Producing a movie from the test data
 
 The bundled TART snapshots under `tests/data/` are gitignored and fetched on demand from Google
