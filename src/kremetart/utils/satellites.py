@@ -168,7 +168,7 @@ def _save_catalog_cache(path, datestrs, times_unix, per_frame, lat, lon, elevati
 def satellite_tracks(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_path=None, nframes=None):
     """Per-satellite ICRS tracks aligned 1:1 with the smoovie frame sequence.
 
-    Iterates the same ordering as :func:`kremetart.core.smoovie.image_via_app`, so the global
+    Iterates the same ordering as :func:`kremetart.utils.read_tart_hdf.prepare_msv4_zarr`, so the global
     frame index produced here matches the dirty-map index exactly.
 
     Args:

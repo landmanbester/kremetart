@@ -1,15 +1,12 @@
 """
 Image a TART HDF sequence into HEALPix all-sky maps and stream them to a live web viewer.
 
-Concatenates the HDFs into a single MSv4 zarr (host prepare-step), then streams it through the GPU
-Holoscan app: the HEALPix imager produces a per-sub-integration dirty map; Tikhonov (CG) and
-reweighted-L1 (FISTA) deconvolvers run in parallel on every frame; a per-pixel IWP-Kalman filter
-smooths the Tikhonov stream and emits the filtered flux and normalised innovation; a writer persists
-``dirty``/``tikhonov``/``l1``/``filtered``/``znorm`` to a durable ``(TIME, npix)`` zarr; and (when
-serving) a terminal sink fans the five named maps out to a FastAPI+uvicorn web layer for a live
-interactive sphere, freezing for scrub-back inspection when the pipeline finishes. The PNG+ffmpeg
-movie path has been removed (the parked Mollweide renderer lives in
-``kremetart.utils.visualisation`` for a future sub-command).
+Host orchestration only: validates the options, resolves the common phase direction, prepares the HDFs
+into one snapshot zarr, starts the web viewer (with optional satellite tracks), then hands the snapshots
+to a runner (:mod:`kremetart.core.runner`): Holoscan on a CUDA machine, the NumPy loop otherwise. Every
+snapshot yields ``dirty``, ``filtered`` and ``znorm`` maps (plus ``tikhonov`` and ``l1`` when enabled), written
+to a durable ``(TIME, PIX)`` zarr and, when serving, streamed live; when the run finishes the viewer
+freezes for scrub-back inspection.
 """
 
 from __future__ import annotations
@@ -19,237 +16,15 @@ import threading
 import webbrowser
 from pathlib import Path
 
-import healpy as hp
-import holoscan as hs
-import xarray as xr
-from holoscan.conditions import CountCondition
-
-from kremetart.operators.dft_healpix import HealpixDFTOperator
-from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
-from kremetart.operators.iwp_kalman import IWPKalmanOperator
-from kremetart.operators.l1_reweight import L1ReweightOperator
-from kremetart.operators.snapshot_ports import snapshot_flow
-from kremetart.operators.tikhonov import TikhonovOperator
-from kremetart.operators.web_sink import WebStreamSinkOperator
+from kremetart.core.runner import select_runner
+from kremetart.core.settings import ImagingSettings
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
-from kremetart.utils.healpix_viz import UNITS, LatestFrameHolder, stream_names
+from kremetart.utils.healpix_viz import LatestFrameHolder
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.rephasing import common_phase_direction
 from kremetart.utils.satellites import satellite_tracks
 from kremetart.utils.web_server import FrameServer
-
-
-class SmooviePipeline(hs.core.Application):
-    """Stream a prepared imaging zarr through the GPU HEALPix imager into a ``(TIME, npix)`` zarr.
-
-    When ``holder`` is given, a terminal :class:`WebStreamSinkOperator` is added and the ``iwp``
-    outputs fan out to both the writer and the sink (Holoscan broadcasts the shared output ports).
-    """
-
-    def __init__(
-        self,
-        prepared_zarr: Path | str,
-        output_zarr: Path | str,
-        nside: int,
-        *args,
-        nest: bool = True,
-        sigma2: float = 1e-3,
-        noise: float = 1e-2,
-        apply_beam: bool = True,
-        ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
-        l2: float = 0.01,
-        l1: float | None = None,
-        holder: LatestFrameHolder | None = None,
-        **kwargs,
-    ):
-        self.prepared_zarr = str(prepared_zarr)
-        self.output_zarr = str(output_zarr)
-        self.nside = nside
-        self.nest = nest
-        self.sigma2 = sigma2
-        self.noise = noise
-        self.apply_beam = apply_beam
-        self.ground_plane_diameter = ground_plane_diameter
-        self.l2 = l2
-        self.l1 = l1
-        self.holder = holder
-        super().__init__(*args, **kwargs)
-
-        ds = xr.open_zarr(self.prepared_zarr)
-        self.ntime = int(ds.time.size)
-        self.out_times = ds.time.values
-        self.freqs = ds.frequency.values
-        self.npix = hp.nside2npix(nside)
-
-    def compose(self):
-        reader = HealpixZarrReaderOperator(
-            self,
-            CountCondition(self, self.ntime),
-            name="reader",
-            zarr_path=self.prepared_zarr,
-        )
-        imager = HealpixDFTOperator(
-            self,
-            self.nside,
-            self.freqs,
-            name="imager",
-            nest=self.nest,
-            apply_beam=self.apply_beam,
-            ground_plane_diameter=self.ground_plane_diameter,
-        )
-        tikhonov = TikhonovOperator(
-            self,
-            self.nside,
-            self.freqs,
-            self.l2,
-            name="tikhonov",
-            nest=self.nest,
-            apply_beam=self.apply_beam,
-            ground_plane_diameter=self.ground_plane_diameter,
-        )
-        # Reweighted-L1 (FISTA) deconvolution is opt-in: it dominates the runtime.
-        l1 = None
-        if self.l1 is not None:
-            l1 = L1ReweightOperator(
-                self,
-                self.nside,
-                self.freqs,
-                self.l1,
-                name="l1reweight",
-                nest=self.nest,
-                apply_beam=self.apply_beam,
-                ground_plane_diameter=self.ground_plane_diameter,
-            )
-        iwp = IWPKalmanOperator(self, self.npix, name="iwp", sigma2=self.sigma2, noise=self.noise)
-        writer = HealpixWriterOperator(
-            self,
-            self.ntime,
-            self.npix,
-            name="writer",
-            output_dataset=self.output_zarr,
-            out_times=self.out_times,
-            var_specs=tuple(
-                (name, name)
-                for name in ("dirty", "tikhonov", "l1", "filtered", "znorm")
-                if name != "l1" or l1 is not None
-            ),
-        )
-
-        # Every stage operator receives the whole snapshot; the solvers also take the dirty map.
-        self.add_flow(reader, imager, snapshot_flow())
-        self.add_flow(reader, tikhonov, snapshot_flow())
-        self.add_flow(imager, tikhonov, {("cube", "cube")})
-        if l1 is not None:
-            self.add_flow(reader, l1, snapshot_flow())
-            self.add_flow(imager, l1, {("cube", "cube")})
-        # Only the Tikhonov stream is smoothed by the IWP (its passthrough cube is the tikhonov channel).
-        self.add_flow(tikhonov, iwp, {("cube", "cube"), ("time_out", "time_out")})
-
-        # Durable writer: dirty (imager), tikhonov model (iwp passthrough), l1 model,
-        # filtered (smoothed tikhonov), znorm.
-        self.add_flow(
-            iwp,
-            writer,
-            {("cube", "tikhonov"), ("filtered", "filtered"), ("znorm", "znorm"), ("time_out", "time_out")},
-        )
-        self.add_flow(imager, writer, {("cube", "dirty")})
-        if l1 is not None:
-            self.add_flow(l1, writer, {("cube", "l1")})
-
-        if self.holder is not None:
-            sink = WebStreamSinkOperator(self, name="websink", holder=self.holder, names=stream_names(self.l1))
-            self.add_flow(
-                iwp,
-                sink,
-                {("cube", "tikhonov"), ("filtered", "smooth"), ("znorm", "znorm"), ("time_out", "time_out")},
-            )
-            self.add_flow(imager, sink, {("cube", "dirty")})
-            if l1 is not None:
-                self.add_flow(l1, sink, {("cube", "l1")})
-
-
-def image_via_app(
-    hdf_paths,
-    nside: int,
-    *,
-    output_zarr,
-    holder: LatestFrameHolder | None = None,
-    correct_gains: bool = False,
-    phase_ra_deg: float | None = None,
-    phase_dec_deg: float | None = None,
-    nframes: int | None = None,
-    nest: bool = True,
-    iwp_sigma: float = 1e-3,
-    iwp_noise: float = 1e-2,
-    apply_beam: bool = True,
-    ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
-    l2: float = 0.01,
-    l1: float | None = None,
-) -> Path:
-    """Image the HDF sequence through the GPU Holoscan app; write a durable ``(TIME, PIX)`` zarr.
-
-    Runs the host prepare-step into a temp zarr, then streams it through :class:`SmooviePipeline`
-    (reader -> imager -> tikhonov (+ l1 in parallel when enabled) -> IWP (Tikhonov stream only) ->
-    writer, plus a web sink when ``holder`` is given). Persists ``dirty``/``tikhonov``/``filtered``/
-    ``znorm`` (plus ``l1`` when enabled) to ``output_zarr`` and
-    returns its path. This is the single imaging seam :func:`smoovie` drives; host-wiring tests
-    stub it.
-
-    Args:
-        hdf_paths: ordered iterable of TART HDF paths.
-        nside: HEALPix resolution.
-        output_zarr: durable output zarr path; the caller does the fail-fast existence check.
-        holder: optional live-frame holder; when set, frames also stream to the web layer.
-        correct_gains: apply the inverse per-antenna gain solution in the prepare-step.
-        phase_ra_deg, phase_dec_deg: common phase direction (deg, ICRS), stored as zarr metadata.
-        nframes: optional cap on the number of frames imaged.
-        nest: NESTED HEALPix ordering (default True).
-        iwp_sigma: IWP driving variance sigma^2.
-        iwp_noise: measurement-noise variance R.
-        apply_beam: fold the Airy primary beam into the measurement operator (default True).
-        ground_plane_diameter: Airy aperture (ground plane) diameter in metres.
-        l2: Tikhonov regularisation strength as a fraction of Σw (lambda = l2 * Σw, default 0.01).
-            See ``scripts/compare_regularisers.py`` for guidance on tuning.
-        l1: Reweighted-L1 (FISTA) regularisation strength as a fraction of Σw. ``None`` (default)
-            disables the L1 deconvolver, which dominates the runtime; pass e.g. ``0.01`` to enable it.
-            ``l2`` and ``l1`` are independent; the IWP smooths the Tikhonov stream.
-
-    Returns:
-        The ``output_zarr`` path.
-    """
-    output = Path(output_zarr)
-    with tempfile.TemporaryDirectory() as td:
-        prepared = Path(td) / "prepared.zarr"
-        config = Path(td) / "config.yaml"
-        config.touch()  # an empty Holoscan config is valid
-
-        prepare_msv4_zarr(
-            hdf_paths,
-            prepared,
-            correct_gains=correct_gains,
-            phase_ra_deg=phase_ra_deg,
-            phase_dec_deg=phase_dec_deg,
-            nframes=nframes,
-        )
-
-        app = SmooviePipeline(
-            prepared,
-            output,
-            nside,
-            nest=nest,
-            sigma2=iwp_sigma,
-            noise=iwp_noise,
-            apply_beam=apply_beam,
-            ground_plane_diameter=ground_plane_diameter,
-            l2=l2,
-            l1=l1,
-            holder=holder,
-        )
-        app.config(str(config))
-        app.run()
-
-    return output
 
 
 def _wait_for_interrupt() -> None:
@@ -261,8 +36,8 @@ def _wait_for_interrupt() -> None:
 
 
 def smoovie(
-    hdf_dir,
-    output,
+    hdf_dir: Path,
+    output: Path,
     nside: int = 128,
     phase_ra_deg: float | None = None,
     phase_dec_deg: float | None = None,
@@ -275,7 +50,7 @@ def smoovie(
     iwp_noise: float = 1e-2,
     apply_beam: bool = True,
     ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
-    l2: float = 0.01,
+    l2: float | None = None,
     l1: float | None = None,
     overwrite: bool = False,
     nframes: int | None = None,
@@ -288,16 +63,15 @@ def smoovie(
     Every sub-integration is imaged into a common ICRS HEALPix frame centered on the shared phase
     direction. If ``phase_ra_deg``/``phase_dec_deg`` are unset they default to the local zenith
     RA/Dec at the global mid-time (:func:`common_phase_direction`); supplying only one raises
-    ``ValueError``. Writes ``output`` (a ``(TIME, PIX)`` zarr holding ``dirty``/``tikhonov``/
-    ``filtered``/``znorm``, plus ``l1`` when enabled); raises ``FileExistsError`` if it exists unless
+    ``ValueError``. Writes ``output`` (a ``(TIME, PIX)`` zarr holding ``dirty``/
+    ``filtered``/``znorm``, plus ``tikhonov``/``l1`` when enabled); raises ``FileExistsError`` if it exists unless
     ``overwrite=True``.
 
-    The pipeline images dirty and Tikhonov in every frame, and reweighted-L1 only when ``l1`` is set
-    (off by default: FISTA dominates the runtime). ``l2`` and ``l1`` set the Tikhonov (CG) and
-    reweighted-L1 (FISTA) regularisation strengths respectively, each as a fraction of the per-frame
-    weight sum (``lambda = strength * Σw``; ``l2`` defaults to ``0.01`` — see
-    ``scripts/compare_regularisers.py`` for guidance). The IWP-Kalman filter smooths the Tikhonov
-    stream; ``filtered`` and ``znorm`` therefore track Tikhonov.
+    Every snapshot gets a dirty map. The deconvolvers are opt-in because they dominate the runtime:
+    ``l2`` enables Tikhonov (CG) and ``l1`` reweighted-L1 (FISTA), each strength a fraction of the
+    snapshot weight sum (``lambda = strength * Σw``; try ``0.01``, and see
+    ``scripts/compare_regularisers.py``). The IWP-Kalman filter smooths the Tikhonov stream when
+    ``l2`` is set and the dirty stream otherwise; ``filtered`` and ``znorm`` track that stream.
 
     With ``serve`` (the default), a FastAPI+uvicorn server starts on ``port``, the view URL is
     printed (and opened if ``open_browser``), frames stream live to an interactive sphere, and when
@@ -334,13 +108,27 @@ def smoovie(
         cache_path = catalog_cache if catalog_cache is not None else str(output) + ".catalog.zarr"
         tracks = satellite_tracks(hdf_paths, catalog_elevation_deg, cache_path=cache_path, nframes=nframes)
 
+    settings = ImagingSettings(
+        nside=nside,
+        l2=l2,
+        l1=l1,
+        iwp_sigma=iwp_sigma,
+        iwp_noise=iwp_noise,
+        apply_beam=apply_beam,
+        ground_plane_diameter=ground_plane_diameter,
+    )
+    runner = select_runner()
+    print(f"kremetart: imaging on {runner.description}")
+
     holder = None
     server = None
     url = None
     if serve:
-        names = stream_names(l1)
+        names = settings.stream_names
         holder = LatestFrameHolder(names)
-        server = FrameServer(holder, nside=nside, nest=True, names=names, units=UNITS, port=port, tracks=tracks)
+        server = FrameServer(
+            holder, nside=nside, nest=settings.nest, names=names, units=settings.stream_units, port=port, tracks=tracks
+        )
         url = server.start()
         print(f"kremetart live view: {url}")
         if open_browser:
@@ -348,23 +136,17 @@ def smoovie(
 
     timings: list = []
     try:
-        with stage_timer("imaging", timings):
-            image_via_app(
+        with stage_timer("imaging", timings), tempfile.TemporaryDirectory() as td:
+            prepared = Path(td) / "prepared.zarr"
+            prepare_msv4_zarr(
                 hdf_paths,
-                nside,
-                output_zarr=output,
-                holder=holder,
+                prepared,
                 correct_gains=correct_gains,
                 phase_ra_deg=phase_ra_deg,
                 phase_dec_deg=phase_dec_deg,
                 nframes=nframes,
-                iwp_sigma=iwp_sigma,
-                iwp_noise=iwp_noise,
-                apply_beam=apply_beam,
-                ground_plane_diameter=ground_plane_diameter,
-                l2=l2,
-                l1=l1,
             )
+            runner.run(prepared, output, settings, holder)
         if serve:
             holder.finish()
             print(f"pipeline finished — serving frozen session at {url} (Ctrl-C to exit)")

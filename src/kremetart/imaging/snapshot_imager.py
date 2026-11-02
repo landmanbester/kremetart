@@ -1,7 +1,8 @@
 """The snapshot imager: the fixed chain of stages that turns each snapshot into all of its maps.
 
 dirty imager -> Tikhonov solver -> IWP filter, with the optional L1 solver alongside the Tikhonov
-solver. The IWP filter smooths the Tikhonov stream. This is the in-process composition used by the CPU
+solver. The Tikhonov solver is optional too: the IWP filter smooths the Tikhonov maps when they are
+produced and the dirty maps otherwise. This is the in-process composition used by the CPU
 loop runner, scripts and end-to-end tests; streaming runtimes (Holoscan today, CyberEther later) wire
 the same stages one per operator/block instead.
 """
@@ -24,11 +25,11 @@ from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 
 @dataclass(frozen=True)
 class SnapshotMaps:
-    """Every map the snapshot imager produces for one snapshot (each ``(npix,)``)."""
+    """Every map the snapshot imager produces for one snapshot (each ``(npix,)``; ``None`` when off)."""
 
     time: float
     dirty: Array
-    tikhonov: Array
+    tikhonov: Array | None
     smooth: Array
     normalised_innovation: Array
     l1: Array | None = None
@@ -39,15 +40,15 @@ class SnapshotImager:
 
     Args:
         dirty_imager: the dirty imager stage.
-        tikhonov_solver: the Tikhonov solver stage.
-        iwp_filter: the IWP filter stage (smooths the Tikhonov maps).
+        tikhonov_solver: optional Tikhonov solver stage; ``None`` disables Tikhonov maps.
+        iwp_filter: the IWP filter stage (smooths the Tikhonov maps, or the dirty maps without them).
         l1_solver: optional L1 solver stage; ``None`` disables L1 maps.
     """
 
     def __init__(
         self,
         dirty_imager: DirtyImager,
-        tikhonov_solver: TikhonovSolver,
+        tikhonov_solver: TikhonovSolver | None,
         iwp_filter: IWPFilter,
         l1_solver: L1Solver | None = None,
     ) -> None:
@@ -61,7 +62,7 @@ class SnapshotImager:
         cls,
         nside: int,
         *,
-        l2: float = 0.01,
+        l2: float | None = None,
         l1: float | None = None,
         sigma2: float = 1e-3,
         noise: float = 1e-2,
@@ -76,7 +77,7 @@ class SnapshotImager:
         )
         return cls(
             DirtyImager(grid),
-            TikhonovSolver(grid, eta=l2),
+            None if l2 is None else TikhonovSolver(grid, eta=l2),
             IWPFilter(grid.npix, sigma2=sigma2, noise=noise, xp=xp),
             None if l1 is None else L1Solver(grid, eta=l1),
         )
@@ -84,7 +85,7 @@ class SnapshotImager:
     def image(self, snapshot: Snapshot) -> SnapshotMaps:
         """Produce every map for ``snapshot`` (call in time order)."""
         dirty = self.dirty_imager.image(snapshot)
-        tikhonov = self.tikhonov_solver.solve(snapshot, dirty)
+        tikhonov = None if self.tikhonov_solver is None else self.tikhonov_solver.solve(snapshot, dirty)
         l1 = None if self.l1_solver is None else self.l1_solver.solve(snapshot, dirty)
-        smooth, innovation = self.iwp_filter.update(tikhonov, snapshot.time)
+        smooth, innovation = self.iwp_filter.update(dirty if tikhonov is None else tikhonov, snapshot.time)
         return SnapshotMaps(snapshot.time, dirty, tikhonov, smooth, innovation, l1)

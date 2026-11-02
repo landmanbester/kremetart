@@ -7,15 +7,15 @@ Read this when editing `src/kremetart/**`.
 | Package | Holds | Imports from |
 |---|---|---|
 | `cli.py` | The Typer app: one thin function per command, forwarding its options to `core`. | `core` (inside the command, so `kremetart --help` stays fast). |
-| `core/` | Host orchestration of a command: data preparation, catalog, web server, profiling, running the streaming app. | `operators`, `utils`. |
+| `core/` | Host orchestration of a command (validation, data preparation, catalog, web server, profiling) and the **runners** that drive the stages (see Runners). | `imaging`, `utils`; `operators` from `holoscan_runner.py` only. |
 | `operators/` | Holoscan **adapters** (receive arrays from ports, build a `Snapshot`, call a stage, emit arrays), plus the zarr reader/writer and the web sink. | `imaging`, `utils`. |
 | `imaging/` | The `Snapshot`, the `SkyGrid`, the four **stages** (dirty imager, Tikhonov solver, L1 solver, IWP filter) and the `SnapshotImager` that chains them. All `xp`-injectable. | `opt`, `utils`. |
 | `opt/` | Generic solvers (CG, FISTA), `xp`-injectable. | itself. |
-| `utils/` | Host helpers: sky geometry, HDF preparation, calibration and gains, satellites, the web server and frame encoding. | itself. |
+| `utils/` | Host helpers: sky geometry, HDF preparation, calibration and gains, satellites, the map store, the web server and frame encoding. | itself. |
 | `static/` | The three.js web viewer. | |
 
 Dependencies point one way, down this chain: `cli → core → operators → imaging → {opt, utils}`, with
-`core` also using `utils`. A helper that a lower package needs moves down into that package under a
+`core` also using `imaging` and `utils`. A helper that a lower package needs moves down into that package under a
 public name (`python-standards.md` §5).
 
 ## Stages and adapters
@@ -28,11 +28,28 @@ records why. A stage takes its array module as an explicit `xp` and keeps its st
 A runtime reaches the stages only through thin adapters: a Holoscan operator today, a CyberEther Python
 block after the port. Behaviour changes go in the stage; plumbing changes go in the adapter.
 
+## Runners
+
+A runner drives the stages over a prepared snapshot zarr and delivers every map to the map store
+(`utils/map_store.py`) and, when serving, the live viewer (`utils/healpix_viz.publish_maps`). Its
+interface is `core.runner.Runner`: `run(prepared, output, settings, holder)`, with `ImagingSettings`
+in `core/settings.py`. Adapters:
+
+| Runner | Module | Runs when |
+|---|---|---|
+| Loop runner: `SnapshotImager` in a Python loop, `xp` injectable (NumPy by default) | `core/loop_runner.py` | no usable CUDA device |
+| Holoscan graph, one operator per stage | `core/holoscan_runner.py` | `core.runner.cuda_available()` |
+
+`core.runner.select_runner` makes the choice; the CyberEther runner will be a third adapter. Every
+runner yields the same maps (`tests/test_runners.py`), so output-format and naming changes go in the
+shared map store and frame publishing, not in a runner. Only `holoscan_runner.py` imports `holoscan`
+or `operators/`; every other `core` module stays importable without a GPU.
+
 ## Commands
 
 `cli.smoovie` and `core.smoovie.smoovie` take exactly the same parameters (`tests/test_cli.py` checks
 this), so a user-facing knob goes on both. Environment differences such as GPU vs CPU are detected
-inside the code; tests force a path by monkeypatching the detector.
+inside the code (`core.runner.cuda_available`); tests force a path by monkeypatching the detector.
 
 ## Packaging and releases
 

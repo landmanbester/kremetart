@@ -56,9 +56,13 @@ def smoovie(
         float, typer.Option(help="Airy aperture (ground plane) diameter in metres.")
     ] = 0.125,
     l2: Annotated[
-        float,
-        typer.Option(help="Tikhonov (L2) deconvolution strength as a fraction of weight sum (lambda = l2 * sum w)."),
-    ] = 0.01,
+        float | None,
+        typer.Option(
+            help="Tikhonov (L2) deconvolution strength as a fraction of weight sum (lambda = l2 * sum w). "
+            "Off by default because it is slow on the CPU; pass a value such as 0.01 to enable it. "
+            "The Kalman filter smooths the Tikhonov maps when enabled, the dirty maps otherwise."
+        ),
+    ] = None,
     l1: Annotated[
         float | None,
         typer.Option(
@@ -77,7 +81,7 @@ def smoovie(
     open_browser: Annotated[bool, typer.Option(help="Open the live web viewer in a browser on startup.")] = False,
 ) -> None:
     """Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer."""
-    # Deferred so that `kremetart --help` stays fast: smoovie pulls in Holoscan, CuPy and xarray.
+    # Deferred so that `kremetart --help` stays fast: smoovie pulls in xarray, healpy and the stages.
     from kremetart.core.smoovie import smoovie as run_smoovie
 
     run_smoovie(

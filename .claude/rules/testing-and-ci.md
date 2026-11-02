@@ -6,7 +6,9 @@ Read this when editing `tests/**` or `.github/workflows/**`.
 
 - Test a module through its interface: stages through `image`/`solve`/`update` on synthetic snapshots
   (`tests/test_imaging_stages.py`), the CLI through Typer's `CliRunner` with `core` stubbed
-  (`tests/test_cli.py`). A test that has to reach past an interface is a sign the module is the wrong
+  (`tests/test_cli.py`), runners through the runner interface (`tests/test_runners.py`), and command
+  orchestration through `smoovie()` on the loop runner with only the web server faked
+  (`tests/test_smoovie.py`). A test that has to reach past an interface is a sign the module is the wrong
   shape.
 - New behaviour in a stage gets a NumPy test; GPU agreement is checked once per chain, not per test.
 
@@ -16,7 +18,7 @@ These are gated so the default suite runs on CPU-only CI runners:
 
 | Test | Runs when |
 |---|---|
-| Holoscan/CuPy tests (`test_smoovie.py`, `test_serve_integration.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
+| Holoscan/CuPy tests (Holoscan runner in `test_runners.py`, fan-out in `test_serve_integration.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
 | `test_stefcal_realdata.py` | `KREMETART_REALDATA=1` |
 | `test_calibration.py` tart2ms oracle | `KREMETART_MS_ORACLE=1` |
 | `test_imaging_parity.py` | `KREMETART_GOLDEN=<dir>` holding reference runs; `KREMETART_GOLDEN_NFRAMES` sets how many snapshots |

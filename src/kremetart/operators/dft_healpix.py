@@ -48,8 +48,10 @@ class HealpixDFTOperator(Operator):
     def setup(self, spec: OperatorSpec) -> None:
         declare_snapshot_inputs(spec)
         spec.output("cube")
+        spec.output("time_out")
 
     def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         snapshot = receive_snapshot(op_input, self.freqs)
         dirty = self.stage.image(snapshot)
         op_output.emit(hs.as_tensor(dirty[None, :]), "cube")
+        op_output.emit(hs.as_tensor(cp.asarray([snapshot.time])), "time_out")

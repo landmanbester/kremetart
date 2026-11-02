@@ -11,7 +11,7 @@ scheduler.
 import cupy as cp
 from holoscan.core import Operator, OperatorSpec
 
-from kremetart.utils.healpix_viz import NAMES, SYMMETRIC, LatestFrameHolder, encode_frame
+from kremetart.utils.healpix_viz import NAMES, LatestFrameHolder, publish_maps
 
 
 class WebStreamSinkOperator(Operator):
@@ -30,8 +30,6 @@ class WebStreamSinkOperator(Operator):
 
     def compute(self, op_input, op_output, context):
         t = float(cp.asnumpy(cp.asarray(op_input.receive("time_out")))[0])
-        for name in self.names:
-            values = cp.asnumpy(cp.asarray(op_input.receive(name)))[0]  # (npix,)
-            vmin, vmax, data = encode_frame(values, symmetric=name in SYMMETRIC)
-            self.holder.put(name, self.seq, t, vmin, vmax, data)
+        maps = {name: cp.asnumpy(cp.asarray(op_input.receive(name)))[0] for name in self.names}  # each (npix,)
+        publish_maps(self.holder, self.seq, t, maps)
         self.seq += 1

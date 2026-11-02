@@ -14,7 +14,7 @@ from kremetart.utils.beam import GROUND_PLANE_DIAMETER
 
 
 class TikhonovOperator(Operator):
-    """Snapshot plus dirty map (``cube``) in; Tikhonov map (``cube``) and timestamp (``time_out``) out.
+    """Snapshot plus dirty map (``cube``) in; Tikhonov map (``cube``) out.
 
     Args:
         fragment: Holoscan fragment.
@@ -57,11 +57,9 @@ class TikhonovOperator(Operator):
         declare_snapshot_inputs(spec)
         spec.input("cube")  # dirty map from the dirty imager
         spec.output("cube")
-        spec.output("time_out")
 
     def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         snapshot = receive_snapshot(op_input, self.freqs)
         dirty = cp.asarray(op_input.receive("cube"))[0]
         x = self.stage.solve(snapshot, dirty)
         op_output.emit(hs.as_tensor(x[None, :]), "cube")
-        op_output.emit(hs.as_tensor(cp.asarray([snapshot.time])), "time_out")
