@@ -22,7 +22,7 @@ import pytest
 import xarray as xr
 
 import kremetart.core.cyberether_runner as cyberether_runner
-from kremetart.core.cyberether_runner import find_nvrtc, flowgraph, run_cyberether
+from kremetart.core.cyberether_runner import find_cyberether, find_nvrtc, flowgraph, run_cyberether
 from kremetart.core.loop_runner import run_loop
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import LatestFrameHolder
@@ -103,6 +103,25 @@ def test_flowgraph_output_specs_match_the_prepared_snapshots(prepared: Path, tmp
         ("[3]", "F64"),
         ("[1]", "F64"),
     ]
+
+
+def test_find_cyberether_names_the_appimages_next_to_a_wrong_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "CyberEther-linux-x64.AppImage").touch()
+    monkeypatch.setenv("KREMETART_CYBERETHER", str(tmp_path / "CyberEther-linux-x64-cuda.AppImage"))
+    with pytest.raises(FileNotFoundError, match="that directory has CyberEther-linux-x64.AppImage"):
+        find_cyberether()
+
+
+def test_find_cyberether_asks_for_chmod_on_a_non_executable_appimage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    appimage = tmp_path / "CyberEther-linux-x64-cuda.AppImage"
+    appimage.touch()
+    monkeypatch.setenv("KREMETART_CYBERETHER", str(appimage))
+    with pytest.raises(PermissionError, match="chmod \\+x"):
+        find_cyberether()
 
 
 def test_find_nvrtc_takes_the_newest_from_a_cuda_toolkit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

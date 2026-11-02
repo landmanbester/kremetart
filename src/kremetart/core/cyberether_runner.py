@@ -101,9 +101,20 @@ def find_cyberether() -> str:
     """The CyberEther executable: ``$KREMETART_CYBERETHER``, else ``cyberether`` on ``PATH``.
 
     Raises:
-        FileNotFoundError: if neither is found.
+        FileNotFoundError: if neither is set or found, or ``$KREMETART_CYBERETHER`` names no file.
+        PermissionError: if ``$KREMETART_CYBERETHER`` is not executable.
     """
-    exe = os.environ.get("KREMETART_CYBERETHER") or shutil.which("cyberether")
+    configured = os.environ.get("KREMETART_CYBERETHER")
+    if configured:
+        exe = Path(configured).expanduser()
+        if not exe.is_file():
+            nearby = sorted(exe.parent.glob("CyberEther*.AppImage")) if exe.parent.is_dir() else []
+            hint = f"; that directory has {', '.join(p.name for p in nearby)}" if nearby else ""
+            raise FileNotFoundError(f"KREMETART_CYBERETHER={configured} is not a file{hint}")
+        if not os.access(exe, os.X_OK):
+            raise PermissionError(f"KREMETART_CYBERETHER={configured} is not executable; run: chmod +x '{exe}'")
+        return str(exe)
+    exe = shutil.which("cyberether")
     if exe is None:
         raise FileNotFoundError("CyberEther not found: set KREMETART_CYBERETHER or put `cyberether` on PATH")
     return exe

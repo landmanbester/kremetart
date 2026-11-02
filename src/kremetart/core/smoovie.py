@@ -95,6 +95,9 @@ def smoovie(
         raise ValueError("hdf_dir and output are required")
     if (phase_ra_deg is None) != (phase_dec_deg is None):
         raise ValueError("phase_ra_deg and phase_dec_deg must be given together (both or neither)")
+    # Before any data access, so a runner that cannot start fails at once.
+    choice = select_runner(runner)
+    print(f"kremetart: imaging on {choice.description}")
     hdf_dir = Path(hdf_dir)
     output = Path(output)
     hdf_paths = sorted(hdf_dir.glob("*.hdf"))
@@ -121,8 +124,6 @@ def smoovie(
         apply_beam=apply_beam,
         ground_plane_diameter=ground_plane_diameter,
     )
-    choice = select_runner(runner)
-    print(f"kremetart: imaging on {choice.description}")
 
     holder = None
     server = None

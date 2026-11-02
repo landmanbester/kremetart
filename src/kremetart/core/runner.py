@@ -22,7 +22,7 @@ from functools import partial
 from pathlib import Path
 from typing import Protocol
 
-from kremetart.core.cyberether_runner import run_cyberether
+from kremetart.core.cyberether_runner import find_cyberether, run_cyberether
 from kremetart.core.loop_runner import run_loop
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import LatestFrameHolder
@@ -87,10 +87,13 @@ def select_runner(name: str = "auto") -> RunnerChoice:
     Raises:
         ValueError: if ``name`` is not a runner.
         RuntimeError: if ``holoscan`` is asked for where it cannot run.
+        FileNotFoundError, PermissionError: if a CyberEther runner is asked for and the executable is
+            missing (:func:`kremetart.core.cyberether_runner.find_cyberether`).
     """
     if name not in RUNNERS:
         raise ValueError(f"unknown runner {name!r}; choose one of {', '.join(RUNNERS)}")
     if name in ("cyberether", "cyberether-gui"):
+        find_cyberether()  # fail before any data is prepared if the executable is missing
         device = "cuda" if cupy_device_available() else "cpu"
         window = name == "cyberether-gui"
         description = f"CyberEther ({'GPU' if device == 'cuda' else 'CPU'}{', window' if window else ''})"

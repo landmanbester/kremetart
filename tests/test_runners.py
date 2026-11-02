@@ -43,6 +43,7 @@ def test_select_runner_cyberether_detects_the_device(
     monkeypatch: pytest.MonkeyPatch, gpu: bool, device: str, name: str, window: bool
 ) -> None:
     monkeypatch.setattr(runner_module, "cupy_device_available", lambda: gpu)
+    monkeypatch.setattr(runner_module, "find_cyberether", lambda: "/opt/cyberether")
     choice = select_runner(name)
     assert choice.run.func is run_cyberether and choice.run.keywords == {"device": device, "window": window}
 

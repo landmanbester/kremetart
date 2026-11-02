@@ -72,9 +72,11 @@ Browser should open automatically, browse to `http://localhost:8080/` if not.
 
 `--runner cyberether` runs the stages as blocks of a headless
 [CyberEther](https://github.com/luigifcruz/CyberEther) flowgraph, on the GPU when CuPy sees one. You need
-CyberEther 1.19 or later: download the AppImage for your platform (`linux-x64-cuda`, or `linux-arm64-cuda`
-on the DGX Spark), make it executable, and point `KREMETART_CYBERETHER` at it (or put it on `PATH` as
-`cyberether`):
+CyberEther 1.19 or later. On a GPU machine use a CUDA build (`CyberEther-linux-x64-cuda.AppImage`, or
+`CyberEther-linux-arm64-cuda.AppImage` on the DGX Spark): the plain `CyberEther-linux-x64.AppImage` has no
+CUDA backend and only suits CPU-only machines. Make the AppImage executable and point
+`KREMETART_CYBERETHER` at it (or put it on `PATH` as `cyberether`), adjusting the path to wherever you
+saved it:
 
 ```bash
 chmod +x ~/Downloads/CyberEther-linux-x64-cuda.AppImage
