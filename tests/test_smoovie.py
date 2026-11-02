@@ -1,6 +1,6 @@
 """Tests for the ``smoovie`` command and its Holoscan imaging app.
 
-``smoovie`` is inherently GPU/Holoscan-driven (mirrors :mod:`kremetart.core.stream_msv4`): there is
+``smoovie`` is inherently GPU/Holoscan-driven: there is
 no CPU fallback, so the whole suite is gated on a CUDA device plus the cupy/holoscan/healpy stack
 (assumed installed via the ``[full]`` extra). On GitHub CPU runners these skip cleanly; run them
 locally on a GPU box. If a test segfaults during the holoscan import, raise the stack limit first:
