@@ -1,50 +1,49 @@
-# Testing & CI/CD Guidelines
+# Testing and CI
 
-Read this when editing `tests/**` or `.github/workflows/**` files.
+Read this when editing `tests/**` or `.github/workflows/**`.
 
-## 1. Round-Trip Tests
+## 1. Test surfaces
 
-The round-trip test in `tests/test_roundtrip.py` is **not optional** — it is how
-this project guarantees that `cli/*.py` and `cabs/*.yml` agree. It runs:
+- Test a module through its interface: stages through `image`/`solve`/`update` on synthetic snapshots
+  (`tests/test_imaging_stages.py`), the CLI through Typer's `CliRunner` with `core` stubbed
+  (`tests/test_cli.py`). A test that has to reach past an interface is a sign the module is the wrong
+  shape.
+- New behaviour in a stage gets a NumPy test; GPU agreement is checked once per chain, not per test.
 
-```
-cli/<cmd>.py  ──(generate-cabs)──►  cabs/<cmd>.yml  ──(generate-function)──►  <cmd>.py
-```
+## 2. GPU, real-data and parity tests
 
-…then asserts the regenerated `<cmd>.py` is byte-identical (after `ruff format`)
-to the original `cli/<cmd>.py`. If you write a CLI wrapper in a shape that
-hip-cargo cannot round-trip, the test fails and the cab is unreliable. **Fix the
-source, not the test.**
+These are gated so the default suite runs on CPU-only CI runners:
 
-Add a new round-trip case to `tests/test_roundtrip.py` whenever you add a new
-command under `cli/`.
+| Test | Runs when |
+|---|---|
+| Holoscan/CuPy tests (`test_smoovie.py`, `test_serve_integration.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
+| `test_stefcal_realdata.py` | `KREMETART_REALDATA=1` |
+| `test_calibration.py` tart2ms oracle | `KREMETART_MS_ORACLE=1` |
+| `test_imaging_parity.py` | `KREMETART_GOLDEN=<dir>` holding reference runs; `KREMETART_GOLDEN_NFRAMES` sets how many snapshots |
 
-## 2. Test Infrastructure
+Parity tolerances follow measured numerics and their reasons are recorded in the test docstring. A
+parity failure gets investigated; the tolerance moves only with a new measurement and reason.
 
-- Use `tempfile.TemporaryDirectory()` for isolated temp files. No test artifacts
-  should ever be written to the repo directory; tests must clean up after
-  themselves.
-- For remote-URI behaviour, prefer fsspec's built-in `memory://` protocol — it
-  needs no credentials and is fast.
-- Any test hitting a real S3/GCS/Azure endpoint must be opt-in (gated on an env
-  var) and excluded from required CI checks.
+Holoscan needs a 32 MB stack: run GPU tests after `ulimit -s 32768`.
 
-## 3. Mandatory Dev Workflow
+## 3. Test hygiene
 
-After every code change run:
+Write temporary files under `tmp_path` (or `tempfile.TemporaryDirectory()`); the repository stays
+clean after a test run. Test data under `tests/data/` is gitignored and fetched on demand
+(`tests/conftest.py`); `KREMETART_OFFLINE=1` skips the download.
+
+## 4. Dev workflow
+
+After every code change:
 
 ```bash
 uv run ruff format . && uv run ruff check . --fix
 ```
 
-This is non-negotiable — the pre-commit hook and CI both enforce it, and
-generated code is formatted with the same configuration, so divergence breaks
-the round-trip.
+The pre-commit hook and CI enforce the same configuration.
 
-## 4. Commits
+## 5. Commits
 
-- Use [Conventional Commits](https://www.conventionalcommits.org/):
-  `<type>: <description>` (`feat`, `fix`, `refactor`, `perf`, `docs`, `test`,
-  `ci`, `deps`, `chore`). Imperative mood, first line under 72 chars.
-- The `update-cabs` bot uses `[skip checks]` to bypass required status checks;
-  **do not** add that tag to human commits.
+[Conventional Commits](https://www.conventionalcommits.org/): `<type>: <description>` with `feat`,
+`fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `deps` or `chore`. Imperative mood, first line under
+72 characters.

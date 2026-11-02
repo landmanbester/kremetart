@@ -1,91 +1,49 @@
-# Python Standards & CLI Implementation Guidelines
+# Python standards
 
-Read this when editing or creating any `**/*.py` files.
+Read this when editing or creating any `**/*.py` file.
 
-## 1. Type Hints and Modern Python
+## 1. Type hints
 
-- **Python 3.10+.** Use modern syntax (`X | Y`, `list[int]`, etc.).
-- **Type hints on every function signature.**
-- Use `from typing import Annotated` for Typer parameter annotations.
+- Python 3.10+ syntax (`X | Y`, `list[int]`).
+- Type hints on every function signature, tests included. Arrays that may be NumPy or CuPy use the
+  `Array` alias from `kremetart.imaging.snapshot`; array modules are `types.ModuleType`.
 
-## 2. Import Placement
+## 2. Import placement
 
-**Imports go at the top of the module** (PEP 8 order: stdlib, third-party,
-first-party). This holds for `core/`, `utils/` and `operators/`. Do **not** scatter
-`import` statements inside function bodies out of habit — top-level imports make a
-module's dependencies legible at a glance, and the container fallback already tolerates
-heavy top-level imports in `core/` (the `cli` wrapper imports `core` inside a
-`try/except ImportError`). Ordinary stdlib and heavy third-party deps (`numpy`,
-`astropy`, `healpy`, `xarray`, `tempfile`, …) belong at the **top** of `core/`/`utils/`
-modules — there is no reason to defer them.
+Imports go at the top of the module, in PEP 8 order (stdlib, third-party, first-party), so a module's
+dependencies are legible at a glance. Heavy dependencies (`numpy`, `xarray`, `healpy`, `astropy`, …)
+belong at the top too.
 
-Put an import inside a function body **only** for one of these specific reasons, and add
-a one-line comment saying which:
+An import goes inside a function body only for one of these reasons, with a one-line comment naming it:
 
-1. **`cli/` → `core/` (required).** A CLI wrapper imports its core implementation
-   *inside the function body*, never at module scope. This is the hinge of the
-   container-fallback pattern (`architecture.md` §3) and keeps the lightweight install
-   importable without the heavy deps. CLI wrappers must stay free of heavy/domain
-   imports at module scope entirely.
-2. **GPU-only deps in a module that must stay importable without a GPU.** `cupy` and
-   `holoscan` are imported at module top *only* in `operators/` and other inherently
-   GPU-only modules. A `core/`/`utils/` module that has a non-GPU path (e.g.
-   `core/smoovie.py`, which falls back to CPU imaging) keeps them lazy — import the
-   GPU module inside the GPU branch — so the CPU path stays importable on a machine
-   without `cupy`/`holoscan`. (A core command that is *inherently* GPU-only, like
-   `core/stream_msv4.py`, may import them at top.)
-3. **fsspec backends stay lazy.** Never import `s3fs`, `gcsfs`, or `adlfs` directly;
-   fsspec loads the matching backend on demand when a remote UPath is first accessed.
-4. **Breaking a genuine import cycle.** Prefer to remove the cycle by moving the shared
-   code into `utils/` (see `architecture.md` §1) over papering over it with a
-   function-body import.
+1. **`cli.py` → `core`**: a command imports its `core` function inside its body so `kremetart --help`
+   stays fast.
+2. **GPU-only dependencies in a module with a CPU path**: `cupy` and `holoscan` sit at module top only in
+   inherently GPU modules (`operators/`). A module that also runs on NumPy imports them inside the GPU
+   branch, so it stays importable on a machine without a GPU (e.g. `utils/beam.py`'s Bessel function).
+3. **Breaking a genuine import cycle**: first try moving the shared code down the dependency chain
+   (`architecture.md`).
 
-## 3. Typer Option / Argument Syntax (CRITICAL)
+## 3. Typer options
 
-**Never pass `None` as the positional default to `typer.Option()`** — it raises
-`AttributeError`. Follow these exact patterns:
+`typer.Option()` takes keyword arguments only; a positional `None` default raises `AttributeError`.
 
-- **Required:** `Annotated[T, typer.Option(..., help="...")]` (no `= default`).
-- **Optional w/ default:** `Annotated[T, typer.Option(help="...")] = default`.
-- **Optional None:** `Annotated[T | None, typer.Option(help="...")] = None`.
+- Required: `Annotated[T, typer.Option(help="...")]` with no `= default`.
+- Optional with default: `Annotated[T, typer.Option(help="...")] = default`.
+- Optional, may be `None`: `Annotated[T | None, typer.Option(help="...")] = None`.
 
-## 4. hip-cargo Types
+## 4. Style
 
-- **Comma-separated lists:** use `ListInt`, `ListFloat`, `ListStr` from
-  `hip_cargo`, with their matching `parse_list_*` parsers. Typer cannot natively
-  handle variable-length lists as a single option; these `NewType` wrappers wrap
-  `str` for Typer but parse into `list[int]` etc. at runtime.
-- **UPath-backed path types:** `File`, `Directory`, `MS`, `URI` are
-  `NewType(..., UPath)`. Generated CLIs use `parser=parse_upath` so the same
-  signature accepts local paths and remote URIs. User functions receive a
-  `universal_pathlib.UPath` and call `.open()` / `.exists()` directly.
-- **The `stimela` metadata dict:** `Annotated[..., StimelaMeta(...)]` overrides
-  inferred cab metadata. Use `StimelaMeta(skip=True)` to exclude a parameter from
-  the generated cab YAML entirely.
+- Prefer functional, explicit code; use a class when state or polymorphism earns it (stages hold
+  per-snapshot state, so they are classes).
+- Let exceptions propagate from `core/`, `imaging/` and `utils/`; `typer.Exit(code=1)` belongs in
+  `cli.py` only.
+- Google-style docstrings (Args, Returns, Raises), concise. Inline comments only where intent is not
+  obvious.
 
-## 5. Architectural Style
+## 5. Private vs shared names
 
-- Prefer functional, explicit-over-implicit code. Use classes when state or
-  polymorphism genuinely helps.
-- Keep `core/` implementations straightforward; let exceptions propagate. Use
-  `typer.Exit(code=1)` for CLI errors in `cli/` (never in `core/`).
-- Use Google-style docstrings (document Args, Returns, Raises). Keep them
-  concise. Add short inline comments only when intent isn't obvious.
-
-## 6. Private vs. Shared Names
-
-A **leading underscore means module-private**: `_helper` may only be used inside the
-module that defines it. If a function (or constant/class) is imported by *any* other
-module, it is part of an API and must **not** carry a leading underscore.
-
-- A helper used across modules is **shared code**: give it a public (non-underscore)
-  name and move it to `utils/` (per `architecture.md` §1) — not a `_name` reached out of
-  a `core/` command. Example: `_partition` / `_utc` defined in `core/smoovie.py` and
-  imported from `utils/satellites.py` is wrong twice over — wrong layer (a `core` command
-  acting as a utility provider; see `architecture.md` §1) *and* wrong visibility (a
-  "private" name used across modules).
-- Reserve `_name` for helpers that genuinely stay within their defining module.
-
-So `utils/` and `operators/` expose public, non-underscore functions; `core/<cmd>.py`
-keeps its `_name` helpers truly local, or promotes them to `utils/` when a second module
-needs them.
+A leading underscore means module-private: `_helper` is used only inside the module that defines it.
+Anything imported by another module is part of an interface and has a public name. A helper that a
+second module needs gets a public name and moves down the dependency chain to the lowest package both
+can import (`architecture.md`).

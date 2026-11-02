@@ -9,7 +9,7 @@ inference machinery is GPU-resident (CuPy + Holoscan); a CUDA GPU is currently r
 ## Installation
 
 ```bash
-pip install "kremetart[full]"  # full native stack (CuPy/Holoscan, healpy, xarray, tart-tools, …)
+pip install kremetart  # CUDA 13 GPU stack (CuPy/Holoscan, healpy, xarray, tart-tools, …)
 ```
 
 ## Usage
@@ -63,7 +63,7 @@ Browser should open automatically, browse to `http://localhost:8080/` if not.
 
 ## Running in a container (Not yet ready!)
 
-If you'd rather not install the full native stack, run any command straight from the published
+If you'd rather not install the native stack, run any command straight from the published
 image. The imaging pipeline is GPU-resident (CuPy + Holoscan) with no CPU fallback, so the
 container **must** be launched with GPU access. This requires the host to have an NVIDIA GPU, recent
 drivers, and the
@@ -76,7 +76,7 @@ docker run --rm --gpus all --ulimit stack=33554432 \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$PWD/tests/data:/data:ro" -v "$PWD/out:/out" \
   ghcr.io/landmanbester/kremetart:0.0.1 \
-  kremetart smoovie --hdf-dir /data --movie /out/tart.mp4 --nside 64 --fps 12 --correct-gains
+  kremetart smoovie --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
 ```
 
 The non-obvious flags:
@@ -87,7 +87,7 @@ The non-obvious flags:
   segfault below this.
 - **`--user … -e HOME=/tmp`** — write outputs as you rather than `root`, and give CuPy/matplotlib a
   writable directory for their on-disk caches.
-- **`-v …`** — mount the input HDF snapshots read-only and a directory to receive the `.mp4`/`.zarr`.
+- **`-v …`** — mount the input HDF snapshots read-only and a directory to receive the `.zarr`.
 
 Swap `:0.0.1` for `:latest` to track `main`. Under Apptainer/Singularity the GPU flag is `--nv`
 instead (`apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:0.0.1 kremetart …`). Add

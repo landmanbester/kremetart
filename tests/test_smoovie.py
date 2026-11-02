@@ -2,7 +2,7 @@
 
 ``smoovie`` is inherently GPU/Holoscan-driven: there is
 no CPU fallback, so the whole suite is gated on a CUDA device plus the cupy/holoscan/healpy stack
-(assumed installed via the ``[full]`` extra). On GitHub CPU runners these skip cleanly; run them
+(part of the default install). On GitHub CPU runners these skip cleanly; run them
 locally on a GPU box. If a test segfaults during the holoscan import, raise the stack limit first:
 ``ulimit -s 32768``. Test data comes from the shared ``hdf_paths`` / ``hdf_dir`` fixtures
 (``conftest.py``).
