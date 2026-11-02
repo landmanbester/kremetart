@@ -41,6 +41,7 @@ in `core/settings.py`. Adapters:
 | `loop`: `SnapshotImager` in a Python loop, `xp` injectable (NumPy by default) | `core/loop_runner.py` | no usable CUDA device |
 | `holoscan`: the Holoscan graph, one operator per stage | `core/holoscan_runner.py` | `core.runner.cuda_available()` |
 | `cyberether`: a CyberEther flowgraph, one Python block per stage, in a `cyberether --headless` subprocess | `core/cyberether_runner.py` | never (opt-in); GPU when `cupy_device_available()` |
+| `cyberether-gui`: the same flowgraph in a CyberEther window, left open until the user closes it | `core/cyberether_runner.py` (`window=True`) | never (opt-in) |
 
 `core.runner.select_runner(name)` maps the `--runner` choice to an adapter; `core.runner.RUNNERS` is the
 list of names, mirrored by `cli.RunnerName`. Which device a runner uses is always detected, never chosen. Every
@@ -50,18 +51,25 @@ or `operators/`; every other `core` module stays importable without a GPU.
 
 ### The CyberEther runner
 
-It writes the flowgraph YAML (each block's code is a stub that builds a `blocks/` adapter), runs it on
-this interpreter (`--python-runtime`), and follows the sink's progress file. CyberEther quirks it
-handles, each recorded where it is handled in `core/cyberether_runner.py`:
+It writes the flowgraph YAML (each block's code is a stub that builds a `blocks/` adapter, laid out left to
+right for the window), runs it on this interpreter (`--python-runtime`), and follows the sink's progress
+file. `docs/adr/0002-cyberether-as-a-subprocess-flowgraph.md` records why it is a subprocess. CyberEther
+behaviours it handles, each recorded where it is handled in `core/cyberether_runner.py`:
 
 - Importing pyarrow, dask or astropy while CyberEther loads block code hangs it, so adapters are built on
   the first compute cycle.
-- The AppImages bundle CUDA 12's NVRTC; the runner preloads the CUDA 13 NVRTC from this interpreter's
-  `nvidia` wheels.
-- A failing block, or a rejected flowgraph, does not stop CyberEther: block stubs record tracebacks and
-  the runner fails on them and on `[ERROR]` log lines.
-- The graph has no end-of-stream: the source returns `SKIP` when done and the runner ends the process
-  (SIGTERM) once the sink reports the last snapshot.
+- The AppImages bundle CUDA 12's NVRTC; the runner preloads the newest CUDA 13+ NVRTC it finds (CUDA
+  wheels, then `$CUDA_PATH`, `$CUDA_HOME`, `/usr/local/cuda*`).
+- A failing block, a rejected flowgraph, or a hang does not stop CyberEther: block stubs record
+  tracebacks, and the runner fails on them, on `[ERROR]` log lines, and (headless) when no snapshot lands
+  for `$KREMETART_CYBERETHER_STALL_SECONDS` (default 300).
+- The graph has no end-of-stream: the source returns `SKIP` when done and the runner ends the process with
+  SIGTERM (SIGINT is unreliable) once the sink reports the last snapshot. On Linux the kernel also
+  SIGTERMs CyberEther if kremetart dies, so no window is orphaned.
+
+Block stubs can only reach the adapters by import, so a change to a `blocks/` adapter needs no change to
+the runner; a change to a block's ports or config needs both (`tests/test_cyberether_runner.py` checks the
+wiring without CyberEther).
 
 ## Commands
 

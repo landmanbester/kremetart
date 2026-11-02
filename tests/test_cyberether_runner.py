@@ -64,6 +64,34 @@ def test_flowgraph_wires_one_block_per_enabled_stage(
     assert _config(blocks["sink"])["names"] == list(settings.stored_names)
 
 
+@pytest.mark.parametrize("note", [False, True])
+def test_flowgraph_lays_out_every_block_for_the_window(prepared: Path, tmp_path: Path, note: bool) -> None:
+    settings = ImagingSettings(nside=2, l2=0.01, l1=0.01)
+    graph = flowgraph(
+        prepared, tmp_path / "o.zarr", settings, tmp_path, device="cpu", dataset=xr.open_zarr(prepared), note=note
+    )
+    positions = [(b["meta"]["node"]["x"], b["meta"]["node"]["y"]) for b in graph["graph"]]
+    assert len(set(positions)) == len(positions)  # no two nodes stacked on each other
+    assert ("about" in {b["name"] for b in graph["graph"]}) == note
+
+
+class _RunningProcess:
+    """Stands in for a CyberEther process that is alive but never writes a snapshot."""
+
+    returncode = None
+
+    def poll(self) -> None:
+        return None
+
+
+def test_a_stalled_run_raises_instead_of_waiting_forever(tmp_path: Path) -> None:
+    (tmp_path / "errors").mkdir()
+    log = tmp_path / "cyberether.log"
+    log.write_text("JETSTREAM [INFO]  | [INSTANCE] Starting instance.\n")
+    with pytest.raises(RuntimeError, match="wrote no snapshot for 0 s"):
+        cyberether_runner._follow(_RunningProcess(), tmp_path, tmp_path / "o.zarr", 3, None, log, stall_seconds=0.2)
+
+
 def test_flowgraph_output_specs_match_the_prepared_snapshots(prepared: Path, tmp_path: Path) -> None:
     ds = xr.open_zarr(prepared)
     nbl, nchan = ds.VISIBILITY.shape[1:]

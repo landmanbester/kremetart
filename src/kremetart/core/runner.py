@@ -8,8 +8,8 @@ a holder, publishes them to the live viewer. Two adapters satisfy it:
   runs anywhere).
 - :func:`kremetart.core.holoscan_runner.run_holoscan`: the Holoscan graph, one operator per stage
   (needs a CUDA device).
-- :func:`kremetart.core.cyberether_runner.run_cyberether`: a headless CyberEther flowgraph, one Python
-  block per stage (needs CyberEther; uses the GPU when CuPy sees one).
+- :func:`kremetart.core.cyberether_runner.run_cyberether`: a CyberEther flowgraph, one Python block per
+  stage, headless or in a window (needs CyberEther; uses the GPU when CuPy sees one).
 
 :func:`select_runner` maps a runner name to an adapter; ``auto`` picks from the environment, and the
 device is always detected rather than chosen. Tests force a path by monkeypatching the detectors.
@@ -52,7 +52,7 @@ class RunnerChoice:
     description: str
 
 
-RUNNERS: tuple[str, ...] = ("auto", "loop", "holoscan", "cyberether")
+RUNNERS: tuple[str, ...] = ("auto", "loop", "holoscan", "cyberether", "cyberether-gui")
 """Runner names :func:`select_runner` accepts (the ``--runner`` choices)."""
 
 
@@ -81,7 +81,8 @@ def select_runner(name: str = "auto") -> RunnerChoice:
     """The runner called ``name`` (one of ``RUNNERS``).
 
     ``auto`` picks Holoscan when :func:`cuda_available`, otherwise the CPU loop runner. ``cyberether``
-    keeps its tensors on the GPU when CuPy sees a device, otherwise on the CPU.
+    keeps its tensors on the GPU when CuPy sees a device, otherwise on the CPU; ``cyberether-gui`` runs the
+    same flowgraph in a CyberEther window.
 
     Raises:
         ValueError: if ``name`` is not a runner.
@@ -89,11 +90,11 @@ def select_runner(name: str = "auto") -> RunnerChoice:
     """
     if name not in RUNNERS:
         raise ValueError(f"unknown runner {name!r}; choose one of {', '.join(RUNNERS)}")
-    if name == "cyberether":
+    if name in ("cyberether", "cyberether-gui"):
         device = "cuda" if cupy_device_available() else "cpu"
-        return RunnerChoice(
-            partial(run_cyberether, device=device), f"CyberEther ({'GPU' if device == 'cuda' else 'CPU'})"
-        )
+        window = name == "cyberether-gui"
+        description = f"CyberEther ({'GPU' if device == 'cuda' else 'CPU'}{', window' if window else ''})"
+        return RunnerChoice(partial(run_cyberether, device=device, window=window), description)
     if name == "holoscan" or (name == "auto" and cuda_available()):
         if not cuda_available():
             raise RuntimeError("the holoscan runner needs a CUDA device with CuPy and Holoscan installed")

@@ -63,14 +63,16 @@ def test_smoovie_runs_the_requested_runner(
 ) -> None:
     calls: list[str] = []
 
-    def fake_cyberether(prepared: Path, output: Path, settings: object, holder: object, *, device: str) -> None:
-        calls.append(device)
+    def fake_cyberether(
+        prepared: Path, output: Path, settings: object, holder: object, *, device: str, window: bool
+    ) -> None:
+        calls.append(f"{device}, window={window}")
         run_loop(prepared, output, settings, holder)
 
     monkeypatch.setattr(runner_module, "run_cyberether", fake_cyberether)
     monkeypatch.setattr(runner_module, "cupy_device_available", lambda: False)
     cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, serve=False, runner="cyberether")
-    assert calls == ["cpu"]
+    assert calls == ["cpu, window=False"]
     assert "CyberEther (CPU)" in capsys.readouterr().out
 
 

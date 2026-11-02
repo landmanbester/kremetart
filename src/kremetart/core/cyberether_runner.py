@@ -15,10 +15,12 @@ its log fails the run.
 
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,26 @@ from kremetart.utils.map_store import create_map_store
 
 POLL_SECONDS = 0.05
 SHUTDOWN_SECONDS = 10.0
+STALL_SECONDS = 300.0
+"""Default for ``$KREMETART_CYBERETHER_STALL_SECONDS``: how long a headless run may go without writing a
+snapshot (start-up included) before it is declared hung."""
+
+# Node layout for the CyberEther window: (column, row) of each block, stages left to right.
+_LAYOUT = {"source": (0, 0), "imager": (1, 0), "tikhonov": (2, 0), "l1": (2, 1), "iwp": (3, 0), "sink": (4, 0)}
+_NODE_WIDTH, _NODE_HEIGHT, _COLUMN, _ROW = 600, 640, 680, 720
+
+_NOTE = """# kremetart smoovie
+
+Each Python block wraps one kremetart stage; the code shown is a stub that builds the adapter in
+`kremetart.blocks` on the first compute cycle and calls it once per snapshot.
+
+- **source** streams the prepared snapshots (visibilities, weights, rotated baselines, boresight, time).
+- **imager** makes the dirty map; **tikhonov** and **l1** deconvolve it (each only when enabled).
+- **iwp** is the per-pixel Kalman filter: the smooth map and the normalised innovation.
+- **sink** writes every map to the map store; kremetart's live viewer reads them from there.
+
+The source stops emitting after the last snapshot; close this window to let `kremetart smoovie` finish.
+"""
 
 _STUB = """\
 import json
@@ -94,6 +116,7 @@ def run_cyberether(
     holder: LatestFrameHolder | None = None,
     *,
     device: str = "cuda",
+    window: bool = False,
 ) -> None:
     """Image every snapshot in ``prepared`` into the map store at ``output`` (the runner interface).
 
@@ -103,9 +126,12 @@ def run_cyberether(
         settings: the imaging settings.
         holder: when given, also publish each snapshot's maps to the live viewer.
         device: where the blocks keep their tensors and run the stages (``cuda`` or ``cpu``).
+        window: run in a CyberEther window, showing the flowgraph, instead of headless. The window stays
+            open after the last snapshot until the user closes it, and there is no stall timeout.
 
     Raises:
-        RuntimeError: if a block fails or CyberEther exits before the last snapshot is written.
+        RuntimeError: if a block fails, CyberEther exits before the last snapshot is written, or (headless)
+            no snapshot is written for ``$KREMETART_CYBERETHER_STALL_SECONDS`` (default 300) seconds.
     """
     ds = xr.open_zarr(prepared)
     times = ds.time.values
@@ -114,13 +140,13 @@ def run_cyberether(
     with tempfile.TemporaryDirectory(prefix="kremetart-cyberether-") as td:
         run_dir = Path(td)
         (run_dir / "errors").mkdir()
-        graph = flowgraph(prepared, output, settings, run_dir, device=device, dataset=ds)
+        graph = flowgraph(prepared, output, settings, run_dir, device=device, dataset=ds, note=window)
         flowgraph_path = run_dir / "flowgraph.yml"
         flowgraph_path.write_text("---\n" + yaml.dump(graph, Dumper=_NoAliasDumper, sort_keys=False, width=1000))
         log_path = run_dir / "cyberether.log"
         command = [
             find_cyberether(),
-            "--headless",
+            *([] if window else ["--headless"]),
             "--dependency-policy",
             "deny",
             "--python-runtime",
@@ -128,17 +154,38 @@ def run_cyberether(
             str(flowgraph_path),
         ]
         with log_path.open("w") as log:
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=_environment(device))
+            process = subprocess.Popen(
+                command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=_environment(device),
+                preexec_fn=_die_with_parent if sys.platform == "linux" else None,
+            )
+            stall = None if window else float(os.environ.get("KREMETART_CYBERETHER_STALL_SECONDS", STALL_SECONDS))
             try:
-                _follow(process, run_dir, output, len(times), holder, log_path)
+                _follow(process, run_dir, output, len(times), holder, log_path, stall_seconds=stall)
+                if window:
+                    print("kremetart: every snapshot is imaged; close the CyberEther window to finish")
+                    process.wait()
             finally:
                 _stop(process)
 
 
 def flowgraph(
-    prepared: Path, output: Path, settings: ImagingSettings, run_dir: Path, *, device: str, dataset: xr.Dataset
+    prepared: Path,
+    output: Path,
+    settings: ImagingSettings,
+    run_dir: Path,
+    *,
+    device: str,
+    dataset: xr.Dataset,
+    note: bool = False,
 ) -> dict[str, Any]:
-    """The CyberEther flowgraph (as a YAML-ready dict) that images ``prepared`` into ``output``."""
+    """The CyberEther flowgraph (as a YAML-ready dict) that images ``prepared`` into ``output``.
+
+    Blocks are laid out left to right in stage order for the CyberEther window; ``note`` adds a note
+    block explaining the graph.
+    """
     nbl, nchan = dataset.VISIBILITY.shape[1:]
     grid = {
         "device": device,
@@ -224,7 +271,26 @@ def flowgraph(
             [],
         )
     )
+    for block in blocks:
+        column, row = _LAYOUT[block["name"]]
+        block["meta"] = {
+            "node": {"x": 40 + column * _COLUMN, "y": 100 + row * _ROW, "width": _NODE_WIDTH, "height": _NODE_HEIGHT}
+        }
+    if note:
+        blocks.insert(0, _note_block())
     return {"version": 2, "title": "kremetart smoovie", "graph": blocks}
+
+
+def _note_block() -> dict[str, Any]:
+    return {
+        "name": "about",
+        "module": "note",
+        "device": "cpu",
+        "runtime": "native",
+        "provider": "generic",
+        "config": {"content": _NOTE},
+        "meta": {"node": {"x": 40, "y": 100 + _ROW, "width": _NODE_WIDTH, "height": 420}},
+    }
 
 
 def _spec(shape: str, dtype: str, device: str) -> dict[str, str]:
@@ -273,14 +339,20 @@ def _follow(
     ntime: int,
     holder: LatestFrameHolder | None,
     log_path: Path,
+    *,
+    stall_seconds: float | None,
 ) -> None:
-    """Wait for the sink to write ``ntime`` snapshots, publishing each one to ``holder`` as it lands."""
+    """Wait for the sink to write ``ntime`` snapshots, publishing each one to ``holder`` as it lands.
+
+    Raises ``RuntimeError`` if ``stall_seconds`` pass without a new snapshot (``None``: wait forever).
+    """
     progress = run_dir / "progress"
     # Read rows straight from zarr: a lazy xarray read per row is slower than the graph itself.
     store = zarr.open_group(str(output), mode="r") if holder is not None else None
     times = store["TIME"][:] if store is not None else None
     names = [name for name in STREAM_NAME if store is not None and name in store]
     published = 0
+    last_written, last_change = 0, time.monotonic()
     while True:
         graph_errors = [line for line in log_path.read_text().splitlines() if "[ERROR]" in line]
         if graph_errors:
@@ -296,11 +368,22 @@ def _follow(
         if written >= ntime:
             return
         if process.poll() is not None:
-            tail = "\n".join(log_path.read_text().splitlines()[-30:])
             raise RuntimeError(
-                f"CyberEther exited with code {process.returncode} after {written}/{ntime} snapshots:\n{tail}"
+                f"CyberEther exited with code {process.returncode} after {written}/{ntime} snapshots:\n"
+                + _tail(log_path)
+            )
+        if written != last_written:
+            last_written, last_change = written, time.monotonic()
+        elif stall_seconds is not None and time.monotonic() - last_change > stall_seconds:
+            raise RuntimeError(
+                f"CyberEther wrote no snapshot for {stall_seconds:.0f} s (after {written}/{ntime}); "
+                f"raise KREMETART_CYBERETHER_STALL_SECONDS if a snapshot really takes that long:\n" + _tail(log_path)
             )
         time.sleep(POLL_SECONDS)
+
+
+def _tail(log_path: Path, lines: int = 30) -> str:
+    return "\n".join(log_path.read_text().splitlines()[-lines:])
 
 
 def _environment(device: str) -> dict[str, str]:
@@ -339,6 +422,12 @@ def find_nvrtc() -> Path | None:
         if found:
             return max(found, key=lambda lib: int(lib.name.rsplit(".", 1)[-1]))
     return None
+
+
+def _die_with_parent() -> None:
+    """In the CyberEther child (Linux): have the kernel SIGTERM it if kremetart dies without cleaning up."""
+    pr_set_pdeathsig = 1
+    ctypes.CDLL(None).prctl(pr_set_pdeathsig, signal.SIGTERM)
 
 
 def _stop(process: subprocess.Popen) -> None:

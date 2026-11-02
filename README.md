@@ -28,19 +28,11 @@ If you have a directory containing pre-downloaded `.hdf` files you should be abl
 kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
 ```
 
-Point your browser to `http://localhost:8080/` to watch the output stream.
+Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
 
 `--runner` picks what drives the imaging. `auto` (the default) uses Holoscan on a CUDA machine and the
-NumPy loop otherwise; `loop` and `holoscan` force one of those. `cyberether` runs the stages as blocks of a
-headless [CyberEther](https://github.com/luigifcruz/CyberEther) flowgraph, on the GPU when CuPy sees one.
-It needs CyberEther 1.19+: point `KREMETART_CYBERETHER` at the AppImage (or put `cyberether` on `PATH`):
-
-```bash
-KREMETART_CYBERETHER=~/Downloads/CyberEther-linux-x64-cuda.AppImage \
-  kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
-```
-
-Each CyberEther run spends about 10 s starting up before the first snapshot. This fetches and overlays the satellite catalog on the fly which might drop frames.
+NumPy loop otherwise; `loop` and `holoscan` force one of those; `cyberether` and `cyberether-gui` are
+described in [Running through CyberEther](#running-through-cyberether). Every runner produces the same maps.
 
 Holoscan recommends a stack size of at least 32 MB and warns (and may crash on deep call stacks) below that. Most Linux shells default to 8 MB, so raise the limit in the shell before running natively:
 
@@ -75,6 +67,49 @@ uv run kremetart smoovie --hdf-dir tests/data --output /tmp/test.zarr --nside 64
 ```
 
 Browser should open automatically, browse to `http://localhost:8080/` if not.
+
+## Running through CyberEther
+
+`--runner cyberether` runs the stages as blocks of a headless
+[CyberEther](https://github.com/luigifcruz/CyberEther) flowgraph, on the GPU when CuPy sees one. You need
+CyberEther 1.19 or later: download the AppImage for your platform (`linux-x64-cuda`, or `linux-arm64-cuda`
+on the DGX Spark), make it executable, and point `KREMETART_CYBERETHER` at it (or put it on `PATH` as
+`cyberether`):
+
+```bash
+chmod +x ~/Downloads/CyberEther-linux-x64-cuda.AppImage
+export KREMETART_CYBERETHER=~/Downloads/CyberEther-linux-x64-cuda.AppImage
+kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
+```
+
+kremetart writes the flowgraph, starts CyberEther on its own Python (so the blocks import kremetart from
+the same environment), and stops it after the last snapshot. Each run spends about 10 s starting up. The
+live web viewer works as with any other runner.
+
+**To see the flowgraph inside CyberEther**, use `--runner cyberether-gui`. It runs the same flowgraph in a
+CyberEther window instead of headless, so you can watch the blocks execute:
+
+```bash
+kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
+```
+
+The window shows a note explaining the graph and one Python block per stage, left to right: `source`
+(the prepared snapshots), `imager` (dirty map), `tikhonov` and `l1` (only when `--l2`/`--l1` are given),
+`iwp` (the Kalman filter) and `sink` (the map store); pin tooltips show each tensor's attributes. Each
+block's code is a short stub that builds the stage adapter from `kremetart.blocks`; the maths itself is in
+`kremetart.imaging`. Editing the stub in the window reloads that block. When every snapshot is imaged,
+kremetart prints `close the CyberEther window to finish`; close the window to let `smoovie` write its
+profile and, when serving, freeze the web viewer.
+
+Troubleshooting:
+
+- **`CyberEther not found`**: set `KREMETART_CYBERETHER` to the AppImage.
+- **A block's traceback**: kremetart stops CyberEther and raises the error from the failing block.
+- **`CyberEther wrote no snapshot for 300 s`**: CyberEther hung, or a snapshot really takes that long (L1 at
+  high nside on the CPU); raise `KREMETART_CYBERETHER_STALL_SECONDS` for the latter.
+- **CUDA errors such as `cuda_fp6.hpp: expected a ";"`**: the AppImage's bundled CUDA 12 compiler is in use.
+  kremetart preloads CUDA 13's NVRTC from your CuPy wheels or CUDA toolkit; if it finds neither, install
+  CUDA 13 or set `CUDA_PATH`.
 
 ## Running in a container (Not yet ready!)
 

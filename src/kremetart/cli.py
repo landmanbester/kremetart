@@ -14,6 +14,7 @@ class RunnerName(str, Enum):
     loop = "loop"
     holoscan = "holoscan"
     cyberether = "cyberether"
+    cyberether_gui = "cyberether-gui"
 
 
 app = typer.Typer(
@@ -94,7 +95,8 @@ def smoovie(
         RunnerName,
         typer.Option(
             help="What drives the imaging: auto (Holoscan on a CUDA machine, the NumPy loop otherwise), loop, "
-            "holoscan, or cyberether (needs KREMETART_CYBERETHER or `cyberether` on PATH).",
+            "holoscan, cyberether (needs KREMETART_CYBERETHER or `cyberether` on PATH), or cyberether-gui (the same "
+            "flowgraph in a CyberEther window; close it to finish).",
         ),
     ] = RunnerName.auto,
 ) -> None:

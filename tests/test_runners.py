@@ -37,11 +37,14 @@ def test_select_runner_refuses_holoscan_without_gpu(monkeypatch: pytest.MonkeyPa
         select_runner("holoscan")
 
 
+@pytest.mark.parametrize("name, window", [("cyberether", False), ("cyberether-gui", True)])
 @pytest.mark.parametrize("gpu, device", [(False, "cpu"), (True, "cuda")])
-def test_select_runner_cyberether_detects_the_device(monkeypatch: pytest.MonkeyPatch, gpu: bool, device: str) -> None:
+def test_select_runner_cyberether_detects_the_device(
+    monkeypatch: pytest.MonkeyPatch, gpu: bool, device: str, name: str, window: bool
+) -> None:
     monkeypatch.setattr(runner_module, "cupy_device_available", lambda: gpu)
-    choice = select_runner("cyberether")
-    assert choice.run.func is run_cyberether and choice.run.keywords == {"device": device}
+    choice = select_runner(name)
+    assert choice.run.func is run_cyberether and choice.run.keywords == {"device": device, "window": window}
 
 
 def test_select_runner_rejects_an_unknown_name() -> None:
