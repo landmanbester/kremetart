@@ -28,7 +28,19 @@ If you have a directory containing pre-downloaded `.hdf` files you should be abl
 kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
 ```
 
-Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
+Point your browser to `http://localhost:8080/` to watch the output stream.
+
+`--runner` picks what drives the imaging. `auto` (the default) uses Holoscan on a CUDA machine and the
+NumPy loop otherwise; `loop` and `holoscan` force one of those. `cyberether` runs the stages as blocks of a
+headless [CyberEther](https://github.com/luigifcruz/CyberEther) flowgraph, on the GPU when CuPy sees one.
+It needs CyberEther 1.19+: point `KREMETART_CYBERETHER` at the AppImage (or put `cyberether` on `PATH`):
+
+```bash
+KREMETART_CYBERETHER=~/Downloads/CyberEther-linux-x64-cuda.AppImage \
+  kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
+```
+
+Each CyberEther run spends about 10 s starting up before the first snapshot. This fetches and overlays the satellite catalog on the fly which might drop frames.
 
 Holoscan recommends a stack size of at least 32 MB and warns (and may crash on deep call stacks) below that. Most Linux shells default to 8 MB, so raise the limit in the shell before running natively:
 

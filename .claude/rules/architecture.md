@@ -36,13 +36,14 @@ A runner drives the stages over a prepared snapshot zarr and delivers every map 
 interface is `core.runner.Runner`: `run(prepared, output, settings, holder)`, with `ImagingSettings`
 in `core/settings.py`. Adapters:
 
-| Runner | Module | Runs when |
+| Runner (`--runner`) | Module | Picked by `auto` when |
 |---|---|---|
-| Loop runner: `SnapshotImager` in a Python loop, `xp` injectable (NumPy by default) | `core/loop_runner.py` | no usable CUDA device |
-| Holoscan graph, one operator per stage | `core/holoscan_runner.py` | `core.runner.cuda_available()` |
-| CyberEther flowgraph, one Python block per stage, in a `cyberether --headless` subprocess | `core/cyberether_runner.py` | not selected automatically yet |
+| `loop`: `SnapshotImager` in a Python loop, `xp` injectable (NumPy by default) | `core/loop_runner.py` | no usable CUDA device |
+| `holoscan`: the Holoscan graph, one operator per stage | `core/holoscan_runner.py` | `core.runner.cuda_available()` |
+| `cyberether`: a CyberEther flowgraph, one Python block per stage, in a `cyberether --headless` subprocess | `core/cyberether_runner.py` | never (opt-in); GPU when `cupy_device_available()` |
 
-`core.runner.select_runner` makes the choice between the first two. Every
+`core.runner.select_runner(name)` maps the `--runner` choice to an adapter; `core.runner.RUNNERS` is the
+list of names, mirrored by `cli.RunnerName`. Which device a runner uses is always detected, never chosen. Every
 runner yields the same maps (`tests/test_runners.py`), so output-format and naming changes go in the
 shared map store and frame publishing, not in a runner. Only `holoscan_runner.py` imports `holoscan`
 or `operators/`; every other `core` module stays importable without a GPU.

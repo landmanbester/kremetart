@@ -1,9 +1,20 @@
 """Command-line interface for kremetart."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
 import typer
+
+
+class RunnerName(str, Enum):
+    """The ``--runner`` choices; ``tests/test_cli.py`` keeps them equal to ``kremetart.core.runner.RUNNERS``."""
+
+    auto = "auto"
+    loop = "loop"
+    holoscan = "holoscan"
+    cyberether = "cyberether"
+
 
 app = typer.Typer(
     name="kremetart",
@@ -79,6 +90,13 @@ def smoovie(
     ] = True,
     port: Annotated[int, typer.Option(help="Port for the live web viewer.")] = 8080,
     open_browser: Annotated[bool, typer.Option(help="Open the live web viewer in a browser on startup.")] = False,
+    runner: Annotated[
+        RunnerName,
+        typer.Option(
+            help="What drives the imaging: auto (Holoscan on a CUDA machine, the NumPy loop otherwise), loop, "
+            "holoscan, or cyberether (needs KREMETART_CYBERETHER or `cyberether` on PATH).",
+        ),
+    ] = RunnerName.auto,
 ) -> None:
     """Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer."""
     # Deferred so that `kremetart --help` stays fast: smoovie pulls in xarray, healpy and the stages.
@@ -106,4 +124,5 @@ def smoovie(
         serve=serve,
         port=port,
         open_browser=open_browser,
+        runner=runner.value,
     )

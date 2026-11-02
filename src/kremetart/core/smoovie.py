@@ -57,6 +57,7 @@ def smoovie(
     serve: bool = True,
     port: int = 8080,
     open_browser: bool = False,
+    runner: str = "auto",
 ) -> Path:
     """Image the HDF sequence in ``hdf_dir`` into the durable ``output`` zarr; serve a live view.
 
@@ -83,6 +84,9 @@ def smoovie(
     imaged; ``iwp_sigma``/``iwp_noise`` set the per-pixel filter's σ²/R. ``apply_beam`` (default on)
     folds the Airy primary beam of a ``ground_plane_diameter``-metre aperture into the measurement
     operator so the maps are oriented toward the intrinsic sky.
+
+    ``runner`` picks what drives the stages (:func:`select_runner`): ``auto`` (Holoscan on a CUDA machine,
+    the NumPy loop otherwise), ``loop``, ``holoscan`` or ``cyberether``.
 
     Returns:
         The ``output`` zarr path.
@@ -117,8 +121,8 @@ def smoovie(
         apply_beam=apply_beam,
         ground_plane_diameter=ground_plane_diameter,
     )
-    runner = select_runner()
-    print(f"kremetart: imaging on {runner.description}")
+    choice = select_runner(runner)
+    print(f"kremetart: imaging on {choice.description}")
 
     holder = None
     server = None
@@ -146,7 +150,7 @@ def smoovie(
                 phase_dec_deg=phase_dec_deg,
                 nframes=nframes,
             )
-            runner.run(prepared, output, settings, holder)
+            choice.run(prepared, output, settings, holder)
         if serve:
             holder.finish()
             print(f"pipeline finished — serving frozen session at {url} (Ctrl-C to exit)")

@@ -16,6 +16,7 @@ import xarray as xr
 
 import kremetart.core.runner as runner_module
 import kremetart.core.smoovie as sm
+from kremetart.core.loop_runner import run_loop
 
 
 class FakeServer:
@@ -55,6 +56,22 @@ def prepare_kwargs(cpu: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr(cpu, "prepare_msv4_zarr", spy)
     return calls
+
+
+def test_smoovie_runs_the_requested_runner(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    calls: list[str] = []
+
+    def fake_cyberether(prepared: Path, output: Path, settings: object, holder: object, *, device: str) -> None:
+        calls.append(device)
+        run_loop(prepared, output, settings, holder)
+
+    monkeypatch.setattr(runner_module, "run_cyberether", fake_cyberether)
+    monkeypatch.setattr(runner_module, "cupy_device_available", lambda: False)
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, serve=False, runner="cyberether")
+    assert calls == ["cpu"]
+    assert "CyberEther (CPU)" in capsys.readouterr().out
 
 
 def test_smoovie_requires_both_phase_components(tmp_path: Path) -> None:
