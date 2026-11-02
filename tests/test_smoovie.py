@@ -1,271 +1,208 @@
-"""Tests for the ``smoovie`` command and its Holoscan imaging app.
+"""Tests for ``smoovie()``: host orchestration around the runner seam.
 
-``smoovie`` is inherently GPU/Holoscan-driven: there is
-no CPU fallback, so the whole suite is gated on a CUDA device plus the cupy/holoscan/healpy stack
-(part of the default install). On GitHub CPU runners these skip cleanly; run them
-locally on a GPU box. If a test segfaults during the holoscan import, raise the stack limit first:
-``ulimit -s 32768``. Test data comes from the shared ``hdf_paths`` / ``hdf_dir`` fixtures
-(``conftest.py``).
-
-The host-wiring tests use the ``sm_stub`` fixture, which stubs the imaging seam
-(``image_via_app``) and the web server (``FrameServer`` + ``_wait_for_interrupt``) so they exercise
-``smoovie()``'s orchestration (phase resolution, track computation, serve lifecycle, cache-path
-default, nframes, profiling) without running the GPU pipeline or binding a port; the end-to-end
-tests run the real Holoscan app.
+These run on any machine: the ``cpu`` fixture forces the CPU loop runner by monkeypatching the device
+detector, so ``smoovie()`` images real HDFs end to end at ``nside=1``. Only the web server is faked
+(``FrameServer`` + ``_wait_for_interrupt``) so no port is bound and the frozen session returns at once.
+The runners themselves are tested in ``test_runners.py``. Test data comes from the shared ``hdf_dir``
+fixture (``conftest.py``).
 """
 
 from pathlib import Path
+from types import ModuleType
 
+import numpy as np
 import pytest
+import xarray as xr
+
+import kremetart.core.runner as runner_module
+import kremetart.core.smoovie as sm
 
 
-def _gpu() -> bool:
-    try:
-        import cupy
+class FakeServer:
+    """Records its constructor kwargs (``FakeServer.last``) and never binds a port."""
 
-        if cupy.cuda.runtime.getDeviceCount() < 1:
-            return False
-        import healpy  # noqa: F401
-        import holoscan  # noqa: F401
+    last: dict = {}
 
-        return True
-    except Exception:
-        return False
+    def __init__(self, holder: object, **kwargs: object) -> None:
+        FakeServer.last = {"holder": holder, **kwargs}
 
+    def start(self) -> str:
+        return "http://localhost:8080/"
 
-pytestmark = pytest.mark.skipif(not _gpu(), reason="requires a CUDA device + cupy/holoscan/healpy")
-
-
-@pytest.fixture
-def sm():
-    """The smoovie module (imported lazily so collection never needs the GPU stack)."""
-    import kremetart.core.smoovie as sm
-
-    return sm
+    def stop(self) -> None:
+        FakeServer.last["stopped"] = True
 
 
 @pytest.fixture
-def sm_stub(sm, monkeypatch):
-    """smoovie module with the GPU imaging seam + web server stubbed, for host-wiring tests.
-
-    ``image_via_app`` becomes a no-op returning the output path; ``FrameServer`` is a fake that
-    records its constructor kwargs (read via ``sm.FrameServer.last``) and never binds a port;
-    ``_wait_for_interrupt`` returns immediately so the frozen-session block never hangs the suite.
-    Tests add their own tracks / phase patches via ``monkeypatch.setattr(sm_stub, ...)``.
-    """
-
-    monkeypatch.setattr(sm, "image_via_app", lambda paths, nside, **k: k.get("output_zarr"))
-
-    class FakeServer:
-        last: dict = {}
-
-        def __init__(self, holder, **kwargs):
-            FakeServer.last = {"holder": holder, **kwargs}
-            self.holder = holder
-
-        def start(self) -> str:
-            return "http://localhost:8080/"
-
-        def stop(self) -> None:
-            FakeServer.last["stopped"] = True
-
+def cpu(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """The smoovie module on the CPU loop runner, with the web server faked."""
+    monkeypatch.setattr(runner_module, "cuda_available", lambda: False)
     monkeypatch.setattr(sm, "FrameServer", FakeServer)
     monkeypatch.setattr(sm, "_wait_for_interrupt", lambda: None)
+    FakeServer.last = {}
     return sm
 
 
-# --- the GPU imaging app -------------------------------------------------------------------------
+@pytest.fixture
+def prepare_kwargs(cpu: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Records the keyword arguments ``smoovie()`` passes to the prepare step (which still runs)."""
+    calls: dict = {}
+    real = cpu.prepare_msv4_zarr
+
+    def spy(paths: list[Path], out: Path, **kwargs: object) -> Path:
+        calls.update(kwargs)
+        return real(paths, out, **kwargs)
+
+    monkeypatch.setattr(cpu, "prepare_msv4_zarr", spy)
+    return calls
 
 
-def test_gpu_operators_import():
-    from kremetart.operators.dft_healpix import HealpixDFTOperator
-    from kremetart.operators.io import HealpixWriterOperator, HealpixZarrReaderOperator
-    from kremetart.operators.iwp_kalman import IWPKalmanOperator
-    from kremetart.operators.web_sink import WebStreamSinkOperator
-
-    assert HealpixDFTOperator and HealpixZarrReaderOperator and HealpixWriterOperator
-    assert IWPKalmanOperator and WebStreamSinkOperator
-
-
-def test_image_via_app_end_to_end(hdf_paths, tmp_path):
-    """The real Holoscan app images + filters one frame per sub-integration into a durable zarr."""
-    import numpy as np
-    import xarray as xr
-
-    from kremetart.core.smoovie import image_via_app
-
-    nside = 8
-    npix = 12 * nside * nside
-    out = tmp_path / "imaging.zarr"
-    result = image_via_app(hdf_paths[:1], nside, output_zarr=out, correct_gains=True, nframes=3, l1=0.01)
-    assert Path(result) == out and out.exists()
-    ds = xr.open_zarr(out)
-    for var in ("dirty", "tikhonov", "l1", "filtered", "znorm"):
-        assert ds[var].shape == (3, npix)
-        assert np.all(np.isfinite(ds[var].values))
-
-
-# --- smoovie() orchestration (imaging + server stubbed) ------------------------------------------
-
-
-def test_smoovie_requires_both_phase_components(tmp_path, sm):
+def test_smoovie_requires_both_phase_components(tmp_path: Path) -> None:
     # Validation happens before any data access or server start, so no HDFs are needed.
     with pytest.raises(ValueError, match="both or neither"):
         sm.smoovie(hdf_dir=tmp_path, output=tmp_path / "out.zarr", phase_ra_deg=10.0)
 
 
-def test_smoovie_honors_explicit_phase_direction(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    captured = {}
+def test_smoovie_images_on_cpu(cpu: ModuleType, hdf_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Without a GPU the loop runner images every snapshot into the map store."""
+    out = tmp_path / "out.zarr"
+    result = cpu.smoovie(hdf_dir=hdf_dir, output=out, nside=1, nframes=2, serve=False)
 
-    def fake_image(paths, nside, **k):
-        captured.update(k)
-        return k.get("output_zarr")
+    assert result == out
+    assert "CPU (NumPy loop)" in capsys.readouterr().out
+    ds = xr.open_zarr(out)
+    assert set(ds.data_vars) == {"dirty", "filtered", "znorm"}  # deconvolution is opt-in
+    for var in ds.data_vars:
+        assert ds[var].shape == (2, 12)
+        assert np.all(np.isfinite(ds[var].values))
 
-    def fail_cpd(paths):
+
+def test_smoovie_honors_explicit_phase_direction(
+    cpu: ModuleType, prepare_kwargs: dict, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_cpd(paths: list[Path]) -> tuple[float, float]:
         raise AssertionError("common_phase_direction must not be called when phase is supplied")
 
-    monkeypatch.setattr(sm_stub, "image_via_app", fake_image)
-    monkeypatch.setattr(sm_stub, "common_phase_direction", fail_cpd)
-
-    sm_stub.smoovie(
+    monkeypatch.setattr(cpu, "common_phase_direction", fail_cpd)
+    cpu.smoovie(
         hdf_dir=hdf_dir,
         output=tmp_path / "out.zarr",
         nside=1,
+        nframes=1,
         phase_ra_deg=12.0,
         phase_dec_deg=-20.0,
         serve=False,
     )
-    assert captured["phase_ra_deg"] == 12.0 and captured["phase_dec_deg"] == -20.0
+    assert prepare_kwargs["phase_ra_deg"] == 12.0 and prepare_kwargs["phase_dec_deg"] == -20.0
 
 
-def test_smoovie_auto_phase_direction_used(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    captured = {}
-
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (123.0, 45.0))
-
-    def fake_image(paths, nside, **k):
-        captured.update(k)
-        return k.get("output_zarr")
-
-    monkeypatch.setattr(sm_stub, "image_via_app", fake_image)
-
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, serve=False)
-    assert captured["phase_ra_deg"] == 123.0 and captured["phase_dec_deg"] == 45.0
+def test_smoovie_auto_phase_direction_used(
+    cpu: ModuleType, prepare_kwargs: dict, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cpu, "common_phase_direction", lambda paths: (123.0, 45.0))
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, serve=False)
+    assert prepare_kwargs["phase_ra_deg"] == 123.0 and prepare_kwargs["phase_dec_deg"] == 45.0
 
 
-def test_smoovie_overlay_passes_tracks_to_server(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
+def test_smoovie_overlay_passes_tracks_to_server(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Patch the name smoovie calls (sm.satellite_tracks) so no API/catalogue read happens.
-    monkeypatch.setattr(sm_stub, "satellite_tracks", lambda paths, elev, **k: {"SAT": [(0, 1.0, 2.0, 1.0)]})
-
-    sm_stub.smoovie(
+    monkeypatch.setattr(cpu, "satellite_tracks", lambda paths, elev, **k: {"SAT": [(0, 1.0, 2.0, 1.0)]})
+    cpu.smoovie(
         hdf_dir=hdf_dir,
         output=tmp_path / "out.zarr",
         nside=1,
+        nframes=1,
         overlay_catalog=True,
         catalog_elevation_deg=30.0,
-        serve=True,
     )
-    assert sm_stub.FrameServer.last["tracks"] == {"SAT": [(0, 1.0, 2.0, 1.0)]}
+    assert FakeServer.last["tracks"] == {"SAT": [(0, 1.0, 2.0, 1.0)]}
 
 
-def test_smoovie_no_overlay_passes_none_tracks(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1)
-    assert sm_stub.FrameServer.last["tracks"] is None
+def test_smoovie_no_overlay_passes_none_tracks(cpu: ModuleType, hdf_dir: Path, tmp_path: Path) -> None:
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1)
+    assert FakeServer.last["tracks"] is None
 
 
-def test_smoovie_serve_starts_finishes_and_stops_server(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
+def test_smoovie_serve_streams_finishes_and_stops_server(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     waited = {"n": 0}
-    monkeypatch.setattr(sm_stub, "_wait_for_interrupt", lambda: waited.__setitem__("n", waited["n"] + 1))
+    monkeypatch.setattr(cpu, "_wait_for_interrupt", lambda: waited.__setitem__("n", waited["n"] + 1))
 
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1)
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=2, l2=0.01, l1=0.01)
 
-    assert sm_stub.FrameServer.last["holder"].finished is True  # frozen-session signal sent
-    assert sm_stub.FrameServer.last.get("stopped") is True  # server torn down
+    holder = FakeServer.last["holder"]
+    assert FakeServer.last["names"] == ("dirty", "tikhonov", "l1", "smooth", "znorm")
+    assert FakeServer.last["nest"] is True
+    assert all(slot is not None for slot in holder.snapshot().values())  # every stream published
+    assert holder.current_seq == 1  # one shared sequence number per snapshot
+    assert holder.finished is True  # frozen-session signal sent
+    assert FakeServer.last.get("stopped") is True  # server torn down
     assert waited["n"] == 1  # blocked for inspection exactly once
 
 
-def test_smoovie_no_serve_skips_server(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
+def test_smoovie_stops_server_when_imaging_fails(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: object, **kwargs: object) -> Path:
+        raise RuntimeError("prepare failed")
 
+    monkeypatch.setattr(cpu, "prepare_msv4_zarr", boom)
+    with pytest.raises(RuntimeError, match="prepare failed"):
+        cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1)
+    assert FakeServer.last["holder"].finished is True
+    assert FakeServer.last.get("stopped") is True
+
+
+def test_smoovie_no_serve_skips_server(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class Boom:
-        def __init__(self, *a, **k):
+        def __init__(self, *a: object, **k: object) -> None:
             raise AssertionError("FrameServer must not be constructed when serve=False")
 
-    monkeypatch.setattr(sm_stub, "FrameServer", Boom)
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, serve=False)
+    monkeypatch.setattr(cpu, "FrameServer", Boom)
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, serve=False)
 
 
-def test_smoovie_nframes_flows_to_imaging(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    captured = {}
-
-    def fake_image(paths, nside, **k):
-        captured.update(k)
-        return k.get("output_zarr")
-
-    monkeypatch.setattr(sm_stub, "image_via_app", fake_image)
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
-
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=7, serve=False)
-    assert captured.get("nframes") == 7
+def test_smoovie_nframes_caps_the_snapshots(cpu: ModuleType, hdf_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out.zarr"
+    cpu.smoovie(hdf_dir=hdf_dir, output=out, nside=1, nframes=3, serve=False)
+    assert xr.open_zarr(out).sizes["TIME"] == 3
 
 
-def test_smoovie_default_catalog_cache_path(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    captured = {}
+def test_smoovie_default_catalog_cache_path(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
 
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
-
-    def fake_tracks(paths, elevation_deg, **k):
+    def fake_tracks(paths: list[Path], elevation_deg: float, **k: object) -> dict:
         captured.update(k)
         return {}
 
-    monkeypatch.setattr(sm_stub, "satellite_tracks", fake_tracks)
-
+    monkeypatch.setattr(cpu, "satellite_tracks", fake_tracks)
     output = tmp_path / "out.zarr"
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=output, nside=1, overlay_catalog=True, nframes=3, serve=True)
+    cpu.smoovie(hdf_dir=hdf_dir, output=output, nside=1, overlay_catalog=True, nframes=3)
     assert captured["cache_path"] == str(output) + ".catalog.zarr"
     assert captured["nframes"] == 3
 
 
-def test_smoovie_profile_prints(tmp_path, hdf_dir, sm_stub, monkeypatch, capsys):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
-
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, profile=True, serve=False)
+def test_smoovie_profile_prints(cpu: ModuleType, hdf_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, profile=True, serve=False)
     out = capsys.readouterr().out
     assert "smoovie profile" in out
     assert "imaging" in out
-    assert "render" not in out and "encode" not in out
 
 
-def test_smoovie_overwrite_fail_fast(tmp_path, hdf_dir, sm_stub, monkeypatch):
-    monkeypatch.setattr(sm_stub, "common_phase_direction", lambda paths: (0.0, 0.0))
+def test_smoovie_overwrite_fail_fast(cpu: ModuleType, hdf_dir: Path, tmp_path: Path) -> None:
     output = tmp_path / "out.zarr"
     output.mkdir()  # pre-existing output
 
     with pytest.raises(FileExistsError):
-        sm_stub.smoovie(hdf_dir=hdf_dir, output=output, nside=1, serve=False)
+        cpu.smoovie(hdf_dir=hdf_dir, output=output, nside=1, serve=False)
 
-    # With overwrite set, the guard passes and orchestration proceeds (imaging stubbed).
-    sm_stub.smoovie(hdf_dir=hdf_dir, output=output, nside=1, overwrite=True, serve=False)
-
-
-# --- full end-to-end (real Holoscan app) ---------------------------------------------------------
-
-
-def test_smoovie_writes_zarr(tmp_path, hdf_dir):
-    """Short end-to-end (no serving): by default (L1 off) the zarr holds the four non-L1 maps."""
-    import numpy as np
-    import xarray as xr
-
-    from kremetart.core.smoovie import smoovie
-
-    out = tmp_path / "live.zarr"
-    smoovie(hdf_dir=hdf_dir, output=out, nside=16, nframes=4, serve=False)
-    assert out.exists()
-    ds = xr.open_zarr(out)
-    assert "l1" not in ds
-    for var in ("dirty", "tikhonov", "filtered", "znorm"):
-        assert ds[var].shape[0] == 4
-        assert np.all(np.isfinite(ds[var].values))
+    # With overwrite set, the guard passes and the run replaces the directory with a map store.
+    cpu.smoovie(hdf_dir=hdf_dir, output=output, nside=1, nframes=1, overwrite=True, serve=False)
+    assert xr.open_zarr(output).sizes["TIME"] == 1

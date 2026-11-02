@@ -1,10 +1,10 @@
 import cupy as cp
-import dask.array as da
 import holoscan as hs
-import numpy as np
 import xarray as xr
-from holoscan.core import Operator, OperatorSpec
+from holoscan.core import ExecutionContext, InputContext, Operator, OperatorSpec, OutputContext
 from numpy.typing import NDArray
+
+from kremetart.utils.map_store import create_map_store, write_maps
 
 
 class HealpixZarrReaderOperator(Operator):
@@ -49,69 +49,40 @@ class HealpixZarrReaderOperator(Operator):
 
 
 class HealpixWriterOperator(Operator):
-    """Write per-frame HEALPix maps to a ``(TIME, PIX)`` zarr (dask scaffold + region="auto").
+    """Write each snapshot's maps into the durable map store (:mod:`kremetart.utils.map_store`).
 
-    The stored variables are configured by ``var_specs`` (one ``(input_port, variable_name)`` pair
-    per map): a lazy dask scaffold is written once, then each frame is written into its region of the
-    flat ``(TIME, npix)`` variables.
-
-    ``out_times`` MUST equal the streamed frames' ``time`` values (the prepared zarr's ``time``
-    coordinate): ``region="auto"`` locates each frame by matching its emitted ``time_out`` against
-    the scaffold's ``TIME`` coordinate, so a mismatch raises ``KeyError`` at write time. The app
-    builds both the scaffold (via this ``out_times``) and the reader's stream from the same zarr, so
-    they agree by construction.
+    ``var_specs`` maps input ports to stored variable names, one ``(input_port, variable_name)`` pair
+    per map. ``out_times`` must equal the streamed snapshots' times: each row is located by matching
+    the received ``time_out`` against them, so a mismatch raises ``KeyError`` at write time.
     """
 
     def __init__(
         self,
         fragment,
-        ntime,
-        npix,
+        ntime: int,
+        npix: int,
         *args,
-        output_dataset: str | None = None,
-        out_times: NDArray = None,
-        var_specs: tuple[tuple[str, str], ...] = (("cube", "dirty"), ("filtered", "filtered"), ("znorm", "znorm")),
+        output_dataset: str,
+        out_times: NDArray,
+        var_specs: tuple[tuple[str, str], ...],
         **kwargs,
-    ):
+    ) -> None:
         self.output_dataset = output_dataset
         self.ntime = ntime
         self.npix = npix
-        self.out_times = out_times if out_times is not None else np.arange(ntime)
-        self.pix = np.arange(npix)
-        # var_specs maps (input_port -> stored_variable_name); the default below is a minimal schema.
-        # smoovie's pipeline overrides it with dirty/tikhonov/l1/filtered/znorm sourced from the
-        # imager, both deconvolvers and the IWP (see kremetart.core.smoovie.SmooviePipeline.compose).
+        self.out_times = out_times
         self.var_specs = tuple(var_specs)
         super().__init__(fragment, *args, **kwargs)
 
-    def start(self):
-        # dask scaffold: da.empty allocates no data, only the zarr structure to write regions into.
-        data_vars = {
-            name: (("TIME", "PIX"), da.empty((self.ntime, self.npix), chunks=(1, self.npix), dtype=np.float32))
-            for _, name in self.var_specs
-        }
-        ds = xr.Dataset(
-            data_vars=data_vars,
-            coords={"TIME": (("TIME",), self.out_times), "PIX": (("PIX",), self.pix)},
-        )
-        ds.to_zarr(self.output_dataset, mode="w", compute=True)
+    def start(self) -> None:
+        create_map_store(self.output_dataset, self.out_times, self.npix, [name for _, name in self.var_specs])
 
-    def setup(self, spec: OperatorSpec):
+    def setup(self, spec: OperatorSpec) -> None:
         for port, _ in self.var_specs:
             spec.input(port)
         spec.input("time_out")
 
-    def compute(self, op_input, op_output, context):
-        time_out = cp.asnumpy(cp.asarray(op_input.receive("time_out")))  # (1,)
-        data_vars = {
-            name: (("TIME", "PIX"), cp.asnumpy(cp.asarray(op_input.receive(port))).astype(np.float32))
-            for port, name in self.var_specs
-        }
-        dso = xr.Dataset(
-            data_vars=data_vars,
-            coords={"TIME": (("TIME",), time_out), "PIX": (("PIX",), self.pix)},
-        )
-        dso.to_zarr(self.output_dataset, region="auto")
-
-    def stop(self):
-        pass
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
+        time_out = float(cp.asnumpy(cp.asarray(op_input.receive("time_out")))[0])
+        maps = {name: cp.asnumpy(cp.asarray(op_input.receive(port)))[0] for port, name in self.var_specs}
+        write_maps(self.output_dataset, time_out, maps)

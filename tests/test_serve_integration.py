@@ -2,7 +2,7 @@
 
 Closes two risks the unit tests leave open, with real execution:
 
-1. The Holoscan fan-out: in serve mode SmooviePipeline wires iwp -> writer AND iwp -> web sink off
+1. The Holoscan fan-out: in serve mode the Holoscan runner's graph wires iwp -> writer AND iwp -> web sink off
    the same iwp output ports. ``test_fanout_populates_holder`` runs the real imaging app with a
    holder and asserts the sink populated it and the durable zarr was still written.
 2. The HTTP/WebSocket serving: FrameServer serves the renderer, the vendored three.js, and the
@@ -21,7 +21,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame, stream_names
+from kremetart.core.runner import cuda_available
+from kremetart.core.settings import ImagingSettings
+from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame
+from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.web_server import FrameServer
 
 
@@ -30,20 +33,6 @@ def _free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def _gpu() -> bool:
-    try:
-        import cupy
-
-        if cupy.cuda.runtime.getDeviceCount() < 1:
-            return False
-        import healpy  # noqa: F401
-        import holoscan  # noqa: F401
-
-        return True
-    except Exception:
-        return False
 
 
 # --- serving: HTTP renderer, vendored three.js, /stream protocol (no GPU) ------------------------
@@ -122,33 +111,26 @@ def test_stream_protocol_geometry_frames_end(served):
     assert {g["name"]: g["unit"] for g in geo} == UNITS  # each geometry carries its unit label
 
 
-# --- fan-out: real GPU pipeline populates the holder AND writes the zarr -------------------------
+# --- fan-out: the Holoscan graph populates the holder AND writes the zarr -------------------------
 
 
-@pytest.mark.skipif(not _gpu(), reason="requires a CUDA device + cupy/holoscan/healpy")
-@pytest.mark.parametrize("l1", [None, 0.01], ids=["l1-off", "l1-on"])
-def test_fanout_populates_holder(tmp_path: Path, l1: float | None) -> None:
-    """Serve-mode pipeline (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
+@pytest.mark.skipif(not cuda_available(), reason="requires a CUDA device + holoscan")
+@pytest.mark.parametrize("l2, l1", [(None, None), (0.01, 0.01)], ids=["default", "l2-l1"])
+def test_fanout_populates_holder(hdf_paths: list[Path], tmp_path: Path, l2: float | None, l1: float | None) -> None:
+    """Serve-mode graph (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
+    from kremetart.core.holoscan_runner import run_holoscan
 
-    data_dir = Path(__file__).resolve().parent / "data"
-    hdf_paths = sorted(data_dir.glob("*.hdf"))
-    if not hdf_paths:
-        pytest.skip("no test HDFs present in tests/data")
-
-    from kremetart.core.smoovie import image_via_app
-
-    nside = 16
-    npix = 12 * nside * nside
-    names = stream_names(l1)
-    holder = LatestFrameHolder(names)
+    settings = ImagingSettings(nside=16, l2=l2, l1=l1)
+    holder = LatestFrameHolder(settings.stream_names)
+    prepared = prepare_msv4_zarr(hdf_paths, tmp_path / "prepared.zarr", nframes=3)
     out = tmp_path / "fanout.zarr"
 
-    image_via_app(hdf_paths, nside, output_zarr=out, holder=holder, nframes=3, l1=l1)
+    run_holoscan(prepared, out, settings, holder)
 
     snap = holder.snapshot()
-    assert set(snap) == set(names)
-    for name in names:
+    assert set(snap) == set(settings.stream_names)
+    for name in settings.stream_names:
         assert snap[name] is not None, f"sink never populated {name!r} -- fan-out broken"
-        assert len(snap[name].data) == npix * 4  # float32 little-endian, full map
+        assert len(snap[name].data) == settings.npix * 4  # float32 little-endian, full map
     assert holder.current_seq == 2  # nframes - 1, shared seq advanced once per integration
     assert out.exists()  # writer still wrote the durable zarr -> both broadcast branches ran

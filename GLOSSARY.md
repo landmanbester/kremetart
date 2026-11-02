@@ -51,7 +51,8 @@ A deconvolved map that balances fidelity to the snapshot against a reweighted L1
 of few bright sources. Produced by the **L1 solver**.
 
 **IWP filter**:
-The stage that follows each pixel of a map stream through time as an integrated Wiener process (a
+The stage that follows each pixel of a map stream (the Tikhonov maps, or the dirty maps when Tikhonov is
+off) through time as an integrated Wiener process (a
 per-pixel Kalman filter), coasting through snapshots that have no data.
 _Avoid_: Kalman operator, smoother
 
@@ -65,6 +66,17 @@ standard deviation. It is the transient detection statistic.
 _Avoid_: znorm, z-score
 
 **Snapshot imager**:
-The fixed chain of stages (dirty imager, Tikhonov solver, optional L1 solver, IWP filter) that turns each
+The fixed chain of stages (dirty imager, optional Tikhonov and L1 solvers, IWP filter) that turns each
 snapshot into all of its maps.
 _Avoid_: pipeline, frame imager
+
+**Runner**:
+What drives the stages over a stream of snapshots, in time order, and delivers every map to the map
+store and the live viewer. The loop runner does this in-process on the CPU; a streaming runtime
+(Holoscan, later CyberEther) does it as a graph with one stage per node. Every runner yields the same
+maps.
+_Avoid_: backend, app, engine
+
+**Map store**:
+The durable record of a run: every map of every snapshot, indexed by time and pixel.
+_Avoid_: output zarr, results

@@ -144,17 +144,31 @@ def test_iwp_filter_coasts_over_a_map_without_data() -> None:
 # --- snapshot imager ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("l1", [None, 0.01])
-def test_snapshot_imager_produces_every_map(l1: float | None) -> None:
-    imager = SnapshotImager.build(NSIDE, l1=l1)
+@pytest.mark.parametrize("l2", [None, 0.01], ids=["l2-off", "l2-on"])
+@pytest.mark.parametrize("l1", [None, 0.01], ids=["l1-off", "l1-on"])
+def test_snapshot_imager_produces_every_enabled_map(l2: float | None, l1: float | None) -> None:
+    imager = SnapshotImager.build(NSIDE, l2=l2, l1=l1)
     grid = imager.dirty_imager.grid
     for k in range(3):
         maps = imager.image(_snapshot(grid, float(k), seed=k))
         assert maps.time == float(k)
-        for name in ("dirty", "tikhonov", "smooth", "normalised_innovation"):
+        for name in ("dirty", "smooth", "normalised_innovation"):
             got = getattr(maps, name)
             assert got.shape == (grid.npix,) and np.all(np.isfinite(got))
+        assert (maps.tikhonov is None) == (l2 is None)
         assert (maps.l1 is None) == (l1 is None)
+
+
+@pytest.mark.parametrize("l2", [None, 0.01], ids=["dirty", "tikhonov"])
+def test_snapshot_imager_smooths_the_tikhonov_maps_or_else_the_dirty_maps(l2: float | None) -> None:
+    imager = SnapshotImager.build(NSIDE, l2=l2)
+    grid = imager.dirty_imager.grid
+    reference = IWPFilter(grid.npix, sigma2=1e-3, noise=1e-2, xp=np)
+    for k in range(3):
+        maps = imager.image(_snapshot(grid, float(k), seed=k))
+        smooth, innovation = reference.update(maps.dirty if l2 is None else maps.tikhonov, float(k))
+        np.testing.assert_array_equal(maps.smooth, smooth)
+        np.testing.assert_array_equal(maps.normalised_innovation, innovation)
 
 
 # --- NumPy / CuPy agreement ---------------------------------------------------------------------

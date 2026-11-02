@@ -8,6 +8,7 @@ bridge between the GXF scheduler thread (the sink writes) and the asyncio server
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import healpy as hp
@@ -15,11 +16,6 @@ import numpy as np
 
 NAMES: tuple[str, ...] = ("dirty", "tikhonov", "l1", "smooth", "znorm")
 SYMMETRIC: frozenset[str] = frozenset({"znorm"})
-
-
-def stream_names(l1: float | None) -> tuple[str, ...]:
-    """The live-stream map names for a run: ``NAMES`` minus ``"l1"`` when L1 deconvolution is off."""
-    return NAMES if l1 is not None else tuple(name for name in NAMES if name != "l1")
 
 
 UNITS: dict[str, str] = {
@@ -96,6 +92,13 @@ class LatestFrameHolder:
     def current_seq(self) -> int:
         with self._lock:
             return self._current_seq
+
+
+def publish_maps(holder: LatestFrameHolder, seq: int, t: float, maps: Mapping[str, np.ndarray]) -> None:
+    """Encode one snapshot's host maps (each ``(npix,)``) and drop them into ``holder`` under ``seq``."""
+    for name, values in maps.items():
+        vmin, vmax, data = encode_frame(values, symmetric=name in SYMMETRIC)
+        holder.put(name, seq, t, vmin, vmax, data)
 
 
 def _order(nest: bool) -> str:

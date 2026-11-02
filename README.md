@@ -2,9 +2,12 @@
 
 **K**alman **R**eal-time **E**vidence **M**onitoring **E**xtractor for **TART**.
 
-Holoscan-driven applications to image and detect transients in data from the
-[Transient Array Radio Telescope (TART)](https://github.com/tart-telescope). The streaming
-inference machinery is GPU-resident (CuPy + Holoscan); a CUDA GPU is currently required.
+Applications to image and detect transients in data from the
+[Transient Array Radio Telescope (TART)](https://github.com/tart-telescope). On a machine with a CUDA
+GPU the imaging streams through Holoscan (CuPy); without one it falls back to an in-process NumPy loop,
+which gives the same maps but is much slower. Deconvolution is opt-in for that reason: pass `--l2 0.01`
+(Tikhonov) and/or `--l1 0.01` (reweighted L1) to enable it; by default the Kalman filter runs on the
+dirty maps.
 
 ## Installation
 
@@ -64,9 +67,8 @@ Browser should open automatically, browse to `http://localhost:8080/` if not.
 ## Running in a container (Not yet ready!)
 
 If you'd rather not install the native stack, run any command straight from the published
-image. The imaging pipeline is GPU-resident (CuPy + Holoscan) with no CPU fallback, so the
-container **must** be launched with GPU access. This requires the host to have an NVIDIA GPU, recent
-drivers, and the
+image. Launch it with GPU access to image on the GPU; without it the container falls back to the
+(slower) CPU loop. GPU access requires the host to have an NVIDIA GPU, recent drivers, and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 installed:
 
@@ -81,8 +83,8 @@ docker run --rm --gpus all --ulimit stack=33554432 \
 
 The non-obvious flags:
 
-- **`--gpus all`** — expose the host GPU(s) to the container; needs the NVIDIA Container Toolkit. The
-  pipeline aborts with *"no CUDA-capable device is detected"* without it.
+- **`--gpus all`** — expose the host GPU(s) to the container; needs the NVIDIA Container Toolkit.
+  Without it the run prints `imaging on CPU (NumPy loop)` and images on the CPU.
 - **`--ulimit stack=33554432`** — give threads a 32 MiB stack. Holoscan warns at import and can
   segfault below this.
 - **`--user … -e HOME=/tmp`** — write outputs as you rather than `root`, and give CuPy/matplotlib a
