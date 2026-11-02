@@ -3,8 +3,8 @@
 import numpy as np
 from scipy.special import j1
 
+from kremetart.imaging.healpix import make_pixel_grid
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
-from kremetart.utils.healpix_dft import make_pixel_grid
 
 LIGHTSPEED = 299792458.0
 

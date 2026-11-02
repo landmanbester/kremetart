@@ -249,8 +249,8 @@ def test_fista_quadratic_zero_rhs_short_circuit():
 
 def test_fista_quadratic_recovers_sparse_sky_through_hessian():
     # End-to-end on the real image-space Hessian: plant point sources, build H/b, recover with FISTA.
+    from kremetart.imaging.healpix import dft_adjoint, dft_forward, hessian_healpix, make_pixel_grid
     from kremetart.utils.beam import airy_power_beam
-    from kremetart.utils.healpix_dft import dft_adjoint, dft_forward, hessian_healpix, make_pixel_grid
 
     nside = 8
     pix = make_pixel_grid(nside, nest=True, xp=np)  # (npix, 3)

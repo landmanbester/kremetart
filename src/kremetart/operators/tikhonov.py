@@ -1,7 +1,7 @@
 """Holoscan operator: per-frame Tikhonov-regularised deconvolution via CG (GPU-resident, xp=cupy).
 
 Sits between the HEALPix imager and the IWP filter. Solves ``(H + λI) x = b`` per frame, where
-``H = B Mᴴ W M B`` is the image-space Hessian (:func:`kremetart.utils.healpix_dft.hessian_healpix`),
+``H = B Mᴴ W M B`` is the image-space Hessian (:func:`kremetart.imaging.healpix.hessian_healpix`),
 ``b`` is the un-normalised dirty image (the imager's normalised dirty times ``Σw``), and
 ``λ = eta·Σw`` makes ``eta`` a frame-invariant fraction of the central PSF value ``Σw``. It needs no
 visibilities — only the weights/geometry/beam that build ``H`` and the imager's dirty map as the RHS.
@@ -16,9 +16,9 @@ import cupy as cp
 import holoscan as hs
 from holoscan.core import Operator, OperatorSpec
 
+from kremetart.imaging.healpix import hessian_healpix, make_pixel_grid
 from kremetart.opt.cg import cg
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER, airy_power_beam
-from kremetart.utils.healpix_dft import hessian_healpix, make_pixel_grid
 
 
 class TikhonovOperator(Operator):

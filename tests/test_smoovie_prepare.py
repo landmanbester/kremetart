@@ -36,7 +36,7 @@ def test_prepare_msv4_zarr_schema_and_shapes(tmp_path, hdf_paths):
 def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
     """BORESIGHT equals the instantaneous-zenith ICRS unit vectors and is unit-norm."""
 
-    from kremetart.utils.healpix_dft import zenith_icrs_vectors
+    from kremetart.utils.geometry import zenith_icrs_vectors
     from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 
     main = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart")).ds
@@ -54,7 +54,7 @@ def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
 
 
 def test_prepare_msv4_zarr_brot_matches_equatorial_baselines(tmp_path, hdf_paths):
-    from kremetart.utils.healpix_dft import equatorial_baselines
+    from kremetart.utils.geometry import equatorial_baselines
     from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
     from kremetart.utils.rephasing import itrs_baselines
 

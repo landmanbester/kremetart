@@ -19,10 +19,11 @@ import numpy as np
 import xarray as xr
 from stefcal_calibrate import solve_file_gains
 
+from kremetart.imaging.healpix import image_frame, make_pixel_grid
 from kremetart.utils import partition_datatree
 from kremetart.utils.beam import airy_power_beam
 from kremetart.utils.gains import apply_inverse_gains
-from kremetart.utils.healpix_dft import image_frame, make_pixel_grid, zenith_icrs_vectors
+from kremetart.utils.geometry import zenith_icrs_vectors
 
 
 def main() -> None:

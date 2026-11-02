@@ -11,7 +11,7 @@ from tart_tools import api_handler
 
 from kremetart.utils import partition_datatree
 from kremetart.utils.calibration import correct_file_gains
-from kremetart.utils.healpix_dft import equatorial_baselines, radec_to_unit_vectors
+from kremetart.utils.geometry import equatorial_baselines, radec_to_unit_vectors
 
 
 def read_hdf_as_xr(path, filter_elevation=45):

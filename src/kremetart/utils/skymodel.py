@@ -44,7 +44,7 @@ def model_visibilities(s_enu, bl_enu, freqs, *, beam=None, xp: ModuleType = np):
     weight that stands in for the apparent-flux modulation of the primary beam, down-weighting
     low-elevation/edge sources. In the ENU frame the antenna boresight is the zenith ``(0, 0, 1)``,
     so a caller forms ``beam`` as ``airy_power_beam(s_enu, (0, 0, 1), freqs)`` (mirroring how
-    :func:`kremetart.utils.healpix_dft.dft_forward` takes a precomputed ``beam``).
+    :func:`kremetart.imaging.healpix.dft_forward` takes a precomputed ``beam``).
 
     Args:
         s_enu: ``(nsrc, 3)`` source ENU unit vectors (e.g. from :func:`enu_direction_cosines`).

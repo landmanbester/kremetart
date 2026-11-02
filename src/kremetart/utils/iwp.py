@@ -83,7 +83,7 @@ def frame_has_observation(y, *, xp: ModuleType = np) -> bool:
 
     A fully-flagged frame (all weights zero) is imaged as an all-zero map -- the no-data sentinel
     the imager and Tikhonov stage emit instead of a ``0/0`` NaN (see
-    :func:`kremetart.utils.healpix_dft.dirty_map`) -- and any non-finite pixel likewise cannot
+    :func:`kremetart.imaging.healpix.dirty_map`) -- and any non-finite pixel likewise cannot
     inform the per-pixel filter. Either case means *no observation*: the IWP step predicts only.
 
     Args:

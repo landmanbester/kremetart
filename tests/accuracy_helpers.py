@@ -93,7 +93,8 @@ def simulate_visibilities(fluxes, svec, ecef_baselines, times, freqs, *, xp: Mod
     Uses the shipped forward model with the shared C(t); ``ecef_baselines`` (nbl,3) are the ITRS
     baseline vectors whose accuracy is under test.
     """
-    from kremetart.utils.healpix_dft import dft_forward, equatorial_baselines
+    from kremetart.imaging.healpix import dft_forward
+    from kremetart.utils.geometry import equatorial_baselines
 
     fluxes = xp.asarray(fluxes)
     svec = xp.asarray(svec)
