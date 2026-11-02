@@ -82,6 +82,7 @@ def test_loop_runner_writes_and_publishes_every_map(
 
 @requires_gpu
 def test_select_runner_with_gpu_is_the_holoscan_runner() -> None:
+    # GPU-only dependency: holoscan_runner imports holoscan and cupy at module top.
     from kremetart.core.holoscan_runner import run_holoscan
 
     assert select_runner().run is run_holoscan
@@ -92,8 +93,10 @@ def test_select_runner_with_gpu_is_the_holoscan_runner() -> None:
 def test_holoscan_runner_agrees_with_the_loop_runner(
     prepared: Path, tmp_path: Path, l2: float | None, l1: float | None
 ) -> None:
+    # GPU-only dependency: this module must import on CPU-only runners.
     import cupy as cp
 
+    # GPU-only dependency: holoscan_runner imports holoscan and cupy at module top.
     from kremetart.core.holoscan_runner import run_holoscan
 
     settings = ImagingSettings(nside=8, l2=l2, l1=l1)

@@ -118,6 +118,7 @@ def test_stream_protocol_geometry_frames_end(served):
 @pytest.mark.parametrize("l2, l1", [(None, None), (0.01, 0.01)], ids=["default", "l2-l1"])
 def test_fanout_populates_holder(hdf_paths: list[Path], tmp_path: Path, l2: float | None, l1: float | None) -> None:
     """Serve-mode graph (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
+    # GPU-only dependency: holoscan_runner imports holoscan and cupy at module top.
     from kremetart.core.holoscan_runner import run_holoscan
 
     settings = ImagingSettings(nside=16, l2=l2, l1=l1)

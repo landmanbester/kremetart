@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
+from kremetart.utils.healpix_viz import UNITS
 
 STORED_NAMES: tuple[str, ...] = ("dirty", "tikhonov", "l1", "filtered", "znorm")
 """Map-store variable names, in order. The live stream calls ``filtered`` ``smooth`` (see ``STREAM_NAME``)."""
@@ -59,3 +60,10 @@ class ImagingSettings:
     def stream_names(self) -> tuple[str, ...]:
         """The live-stream names this run publishes."""
         return tuple(STREAM_NAME[name] for name in self.stored_names)
+
+    @property
+    def stream_units(self) -> dict[str, str]:
+        """Unit label of each live stream; the smooth map carries the unit of the map it smooths."""
+        units = {name: UNITS[name] for name in self.stream_names}
+        units["smooth"] = UNITS["tikhonov" if self.l2 is not None else "dirty"]
+        return units

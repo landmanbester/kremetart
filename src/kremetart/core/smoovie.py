@@ -19,7 +19,7 @@ from pathlib import Path
 from kremetart.core.runner import select_runner
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
-from kremetart.utils.healpix_viz import UNITS, LatestFrameHolder
+from kremetart.utils.healpix_viz import LatestFrameHolder
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.rephasing import common_phase_direction
@@ -127,7 +127,7 @@ def smoovie(
         names = settings.stream_names
         holder = LatestFrameHolder(names)
         server = FrameServer(
-            holder, nside=nside, nest=settings.nest, names=names, units=UNITS, port=port, tracks=tracks
+            holder, nside=nside, nest=settings.nest, names=names, units=settings.stream_units, port=port, tracks=tracks
         )
         url = server.start()
         print(f"kremetart live view: {url}")

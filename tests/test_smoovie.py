@@ -125,6 +125,12 @@ def test_smoovie_no_overlay_passes_none_tracks(cpu: ModuleType, hdf_dir: Path, t
     assert FakeServer.last["tracks"] is None
 
 
+def test_smoovie_labels_the_smoothed_dirty_maps_in_dirty_units(cpu: ModuleType, hdf_dir: Path, tmp_path: Path) -> None:
+    """Without Tikhonov the IWP filter smooths the dirty maps, so the viewer labels them Jy/beam."""
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1)
+    assert FakeServer.last["units"] == {"dirty": "Jy/beam", "smooth": "Jy/beam", "znorm": ""}
+
+
 def test_smoovie_serve_streams_finishes_and_stops_server(
     cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,6 +142,7 @@ def test_smoovie_serve_streams_finishes_and_stops_server(
     holder = FakeServer.last["holder"]
     assert FakeServer.last["names"] == ("dirty", "tikhonov", "l1", "smooth", "znorm")
     assert FakeServer.last["nest"] is True
+    assert FakeServer.last["units"]["smooth"] == "Jy/pixel"  # smooths the Tikhonov maps
     assert all(slot is not None for slot in holder.snapshot().values())  # every stream published
     assert holder.current_seq == 1  # one shared sequence number per snapshot
     assert holder.finished is True  # frozen-session signal sent
