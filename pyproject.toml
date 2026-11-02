@@ -17,20 +17,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "typer>=0.12.0",
     "healpy>=1.19.0",
-    "hip-cargo>=0.2.2",
-]
-
-# Lightweight install (default):  pip install kremetart
-#     Only pulls hip-cargo + typer. Suitable for cab consumers (e.g. stimela)
-#     and for running commands via container fallback. Generated CLI wrappers
-#     lazy-import core/, so when heavy deps are missing the wrapper drops into
-#     run_in_container() automatically.
-# Full install:                    pip install kremetart[full]
-#     Adds the heavy runtime deps that core/ implementations need to execute
-#     natively. Add new deps to the "full" extra below as you grow core/.
-[project.optional-dependencies]
-full = [
     "numpy>=2.0.0",
     "scipy>=1.15.0",
     "xarray>=2025.0",
@@ -64,8 +52,6 @@ Repository = "https://github.com/landmanbester/kremetart"
 kremetart = "kremetart.cli:app"
 
 [build-system]
-# NOTE: This uv_build constraint is intentionally aligned with hip-cargo's own pyproject.toml.
-# If you bump uv_build in hip-cargo, update this template constraint to match.
 requires = ["uv_build>=0.11.21,<0.12.0"]
 build-backend = "uv_build"
 
@@ -110,5 +96,4 @@ test = [
     "pytest-cov>=5.0.0",
     "pyproj>=3.6.0",
     "gdown>=5.0.0",
-    "kremetart[full]",
 ]

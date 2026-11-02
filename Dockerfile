@@ -1,10 +1,10 @@
 # CUDA 13 runtime base.
 #
-# The [full] stack is a CUDA-13 GPU stack: holoscan-cu13 -> cupy-cuda13x, plus nvidia-cublas
+# The dependency stack is a CUDA-13 GPU stack: holoscan-cu13 -> cupy-cuda13x, plus nvidia-cublas
 # (13.x). NVIDIA documents that the CUDA runtime is required even for CPU-only Holoscan
 # pipelines, so a plain python:slim base can never run these commands natively. The "runtime"
 # flavour (not "base") additionally ships the CUDA math libraries cupy links against at
-# runtime -- cuBLAS, cuSOLVER (cp.linalg.solve in operators/dft_lm.py), cuFFT, cuRAND,
+# runtime -- cuBLAS, cuSOLVER, cuFFT, cuRAND,
 # cuSPARSE -- so we do not have to assemble them by hand.
 #
 # Ubuntu 24.04 => glibc 2.39, which is what NVIDIA recommends for the holoscan-cu13 wheel
@@ -48,7 +48,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.9.8 /uv /usr/local/bin/uv
 
 # The CUDA runtime base ships no Python, and Ubuntu 24.04 would otherwise give Python 3.12.
-# Several [full] deps (tart-tools, netcdf4, tart[all], arcae, xarray-ms, msv4-utils) are gated
+# Several deps (tart-tools, netcdf4, tart[all], arcae, xarray-ms, msv4-utils) are gated
 # on `python_version >= '3.11'`, so we let uv provision a standalone Python 3.11 (matching
 # .python-version) into a venv, independent of the base image's system Python.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
@@ -61,8 +61,8 @@ RUN uv python install 3.11 \
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 
-# Install package with full dependencies into the venv (VIRTUAL_ENV is honoured by uv).
-RUN uv pip install --no-cache ".[full]"
+# Install the package and its dependencies into the venv (VIRTUAL_ENV is honoured by uv).
+RUN uv pip install --no-cache .
 
 # Finalize wheel_axle wheels (holoscan-cu13) at build time. These wheels cannot ship
 # symlinks, so they defer creating their shared-library SONAME links (e.g.

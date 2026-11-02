@@ -302,7 +302,7 @@ def smoovie(
     With ``serve`` (the default), a FastAPI+uvicorn server starts on ``port``, the view URL is
     printed (and opened if ``open_browser``), frames stream live to an interactive sphere, and when
     the pipeline finishes the session freezes for scrub-back inspection until interrupted (Ctrl-C).
-    ``--no-serve`` images headlessly (batch / Stimela-cab use). ``overlay_catalog`` (serve only)
+    ``--no-serve`` images headlessly (batch use). ``overlay_catalog`` (serve only)
     overlays each catalogue satellite above ``catalog_elevation_deg`` as 3D tracks; it requires
     network access to the TART catalogue API, cached at ``catalog_cache`` (``None`` ->
     ``<output>.catalog.zarr``). ``profile`` prints the imaging wall-time; ``nframes`` caps the frames

@@ -11,9 +11,8 @@ on:
       - main
   workflow_dispatch:
 
-# Cab generation is handled by pre-commit hooks locally.
-# This workflow only builds and pushes container images so users can test
-# hotfixes using stimela (which pulls images specified in cab definitions).
+# Builds and pushes the container image: tagged by version on release tags, `latest` on main,
+# and per-branch for pull requests.
 
 env:
   REGISTRY: ghcr.io

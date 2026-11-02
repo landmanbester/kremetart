@@ -1,0 +1,100 @@
+"""The ``kremetart`` CLI: option parsing and hand-off to :func:`kremetart.core.smoovie.smoovie`.
+
+The core module is replaced by a stub in ``sys.modules`` and its signature is read from source, so these
+tests run without Holoscan/CuPy or a GPU.
+"""
+
+import ast
+import inspect
+import sys
+import types
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+import kremetart.cli as cli
+from kremetart.cli import app
+
+runner = CliRunner()
+CORE_SMOOVIE = Path(cli.__file__).parent / "core" / "smoovie.py"
+
+
+@pytest.fixture
+def captured(monkeypatch: pytest.MonkeyPatch) -> dict:
+    calls: dict = {}
+
+    def fake_smoovie(**kwargs: object) -> Path:
+        calls.update(kwargs)
+        return Path(str(kwargs["output"]))
+
+    stub = types.ModuleType("kremetart.core.smoovie")
+    stub.smoovie = fake_smoovie
+    monkeypatch.setitem(sys.modules, "kremetart.core.smoovie", stub)
+    return calls
+
+
+def test_help_lists_smoovie() -> None:
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0 and "smoovie" in result.output
+
+
+def test_smoovie_requires_input_and_output(captured: dict) -> None:
+    result = runner.invoke(app, ["smoovie"])
+    assert result.exit_code != 0
+    assert captured == {}
+
+
+def test_smoovie_forwards_every_option(captured: dict, tmp_path: Path) -> None:
+    """Every option, set to a distinct non-default value, reaches core unchanged."""
+    expected = {
+        "hdf_dir": tmp_path / "hdf",
+        "output": tmp_path / "out.zarr",
+        "nside": 32,
+        "phase_ra_deg": 12.5,
+        "phase_dec_deg": -30.25,
+        "correct_gains": True,
+        "overlay_catalog": True,
+        "catalog_elevation_deg": 30.0,
+        "catalog_cache": str(tmp_path / "catalog.zarr"),
+        "profile": True,
+        "iwp_sigma": 0.002,
+        "iwp_noise": 0.03,
+        "apply_beam": False,
+        "ground_plane_diameter": 0.25,
+        "l2": 0.05,
+        "l1": 0.001,
+        "overwrite": True,
+        "nframes": 7,
+        "serve": False,
+        "port": 9090,
+        "open_browser": True,
+    }
+    args = ["smoovie"]
+    for name, value in expected.items():
+        flag = "--" + name.replace("_", "-")
+        if isinstance(value, bool):
+            args.append(flag if value else "--no-" + name.replace("_", "-"))
+        else:
+            args += [flag, str(value)]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert captured == expected
+    defaults = {
+        name: p.default for name, p in inspect.signature(cli.smoovie).parameters.items() if p.default is not p.empty
+    }
+    assert all(expected[name] != default for name, default in defaults.items()), "use non-default values"
+
+
+def _core_parameters() -> list[str]:
+    """Parameter names of ``core.smoovie.smoovie``, read from source so no GPU stack is imported."""
+    tree = ast.parse(CORE_SMOOVIE.read_text())
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "smoovie")
+    return [a.arg for a in func.args.posonlyargs + func.args.args + func.args.kwonlyargs]
+
+
+def test_cli_options_match_the_core_signature() -> None:
+    """Every core parameter is reachable from the CLI, and the CLI adds none of its own."""
+    assert list(inspect.signature(cli.smoovie).parameters) == _core_parameters()
