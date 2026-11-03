@@ -125,8 +125,8 @@ Troubleshooting:
 
 ## Running in a container
 
-The published image (`ghcr.io/landmanbester/kremetart`, x86-64) carries the whole Linux stack, CUDA
-included. Started with GPU access it images on the GPU (Holoscan); without it, it falls back to the CPU
+The published image (`ghcr.io/landmanbester/kremetart`, for x86-64 and arm64 such as the DGX Spark;
+`docker pull` picks the right one) carries the whole Linux stack, CUDA included. Started with GPU access it images on the GPU (Holoscan); without it, it falls back to the CPU
 loop. GPU access needs an NVIDIA GPU, recent drivers and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 

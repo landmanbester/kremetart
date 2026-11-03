@@ -90,7 +90,9 @@ inside the code (`core.runner.cuda_available`); tests force a path by monkeypatc
 - StefCAL (`utils/stefcal.py`, the sky model in `utils/skymodel.py`, `opt.fista`'s operator form, and
   `utils/satellites.frame_source_directions`) has no command calling it yet: it is kept, and tested
   directly, for on-the-fly calibration. `scripts/` holds the host-side checks of it against TART's gains.
-- `Dockerfile` builds the runtime image; `.github/workflows/publish-container.yml` pushes it to
+- `Dockerfile` builds the runtime image; `.github/workflows/publish-container.yml` builds it natively for
+  linux/amd64 and linux/arm64 (the DGX Spark) and pushes one multi-arch tag to
   `ghcr.io/landmanbester/kremetart` (version tag on release tags, `latest` on `main`, per-branch on PRs).
+  A new system package or base image must exist for both architectures.
 - Release with `uv run tbump <version>`: it regenerates `CHANGELOG.md`, refreshes `uv.lock`, then tags
   and pushes. The tag triggers the PyPI and container publishes.
