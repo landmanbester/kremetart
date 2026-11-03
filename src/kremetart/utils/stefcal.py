@@ -1,7 +1,7 @@
 """Acquisition StEFCal: alternating per-antenna complex-gain least squares.
 
 The cold-start solver of the Stage-1 calibration operator
-(docs/superpowers/specs/2026-06-24-stefcal-calibration-core-design.md). Holding all other antenna
+(docs/design/stefcal-calibration.md). Holding all other antenna
 gains fixed, ``V_pq = g_p M_pq conj(g_q)`` is linear in ``g_p``; alternating that antenna-by-antenna
 gives a robust, phase-wrap-free cold start. The per-antenna normal equations are diagonal (a scalar
 Hessian ``H_p = sum_q w |z_pq|^2`` per antenna, with ``z_pq = M_pq conj(g_q)``), so the "inversion"

@@ -107,10 +107,9 @@ def catalog_elevation(catalog_cache: str) -> float:
     return float(xr.open_zarr(catalog_cache).attrs["elevation_deg"])
 
 
-# The single reference snapshot that ships with matching tart2ms Measurement Sets, used by the
-# accuracy / rephasing / spec-compliance oracles. Centralised here (basename in one place) so a
-# change of reference dataset touches only this file. Both MS flavours exist: the calibrated ``.ms``
-# and the uncalibrated ``_nocal.ms`` (raw amplitudes, for the rephasing/geometry comparisons).
+# The single reference snapshot that ships with a matching tart2ms Measurement Set, used by the
+# calibration oracles. Centralised here (basename in one place) so a change of reference dataset
+# touches only this file.
 _REF_STEM = "vis_2026-06-09_08_11_43.476804"
 
 
@@ -130,16 +129,6 @@ def ref_ms(data_dir: Path) -> Path:
     ms = data_dir / f"{_REF_STEM}.ms"
     if not ms.exists():
         pytest.skip(f"reference MS not present: {ms}")
-    return ms
-
-
-@pytest.fixture(scope="session")
-def ref_ms_nocal(data_dir: Path) -> Path:
-    """The uncalibrated (raw-amplitude) tart2ms Measurement Set for the reference snapshot."""
-    pytest.importorskip("xarray_ms")  # reads Measurement Sets; casacore has no Windows wheels
-    ms = data_dir / f"{_REF_STEM}_nocal.ms"
-    if not ms.exists():
-        pytest.skip(f"reference nocal MS not present: {ms}")
     return ms
 
 

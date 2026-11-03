@@ -1,17 +1,21 @@
-"""Host-side sky geometry for imaging: ICRS<->ITRS rotations, zenith directions, rotated baselines.
+"""Host-side sky geometry: ICRS<->ITRS rotations, zenith directions, rotated baselines, phase direction.
 
-Computed on the host with pyerfa via :mod:`tart_msv4.geometry` (``O(n_time)``); the per-snapshot
-results (rotated baselines, boresight) are handed to the device-side maths in
-:mod:`kremetart.imaging.healpix`, the same host/device split as :mod:`kremetart.utils.rephasing`.
-Only numpy and pyerfa are needed: tart-msv4 >= 0.1.2 no longer imports its xarray backend on package import.
+Everything here is per run or per timestamp (``O(n_time)``) and runs on the host: pyerfa via
+:mod:`tart_msv4.geometry` for the rotations, astropy for the run's common phase direction. The prepare step
+stores the per-snapshot results (rotated baselines, boresight) for the device-side maths in
+:mod:`kremetart.imaging`, which never imports this module.
 """
 
 from __future__ import annotations
 
 from types import ModuleType
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.time import Time
 from tart_msv4 import geometry as tart_geometry
+from tart_msv4.backend import read_metadata
 
 
 def _icrs_to_itrs_matrices(times: np.ndarray) -> np.ndarray:
@@ -58,24 +62,53 @@ def radec_to_unit_vectors(ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
     return np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=1)
 
 
-def equatorial_baselines(itrs_baselines, times, *, backend: str = "astropy", xp: ModuleType = np):
+def equatorial_baselines(itrs_baselines, times, *, xp: ModuleType = np):
     """Rotate fixed ITRS baselines into the equatorial frame for each timestamp.
 
     Args:
-        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors (e.g. from rephasing's ``itrs_baselines``).
+        itrs_baselines: ``(nbl, 3)`` ITRS baseline vectors ``pos(ant1) - pos(ant2)``.
         times: ``(n_time,)`` unix-second timestamps.
-        backend: ``"astropy"`` (host-side rotation matrices; computed with pyerfa via tart-msv4 since the
-            port, the name is kept for compatibility) or ``"native"`` (GPU polynomial; later phase).
         xp: Array module for the returned array.
 
     Returns:
         ``(n_time, nbl, 3)`` equatorial-rotated baselines ``b_pq(t)`` in metres.
     """
-    if backend == "astropy":
-        b = np.asarray(itrs_baselines)
-        rot = _icrs_to_itrs_matrices(times)  # (n_time, 3, 3)
-        b_rot = np.einsum("bi,tik->tbk", b, rot)  # b_itrs @ R(t)
-        return xp.asarray(b_rot)
-    if backend == "native":
-        raise NotImplementedError("GPU-native C(t) backend is a later phase; use backend='astropy'.")
-    raise ValueError(f"unknown backend {backend!r}")
+    b = np.asarray(itrs_baselines)
+    rot = _icrs_to_itrs_matrices(times)  # (n_time, 3, 3)
+    b_rot = np.einsum("bi,tik->tbk", b, rot)  # b_itrs @ R(t)
+    return xp.asarray(b_rot)
+
+
+def common_phase_direction(hdf_paths) -> tuple[float, float]:
+    """Single shared ICRS phase direction: the local zenith RA/Dec at the global mid-time.
+
+    Reads the first and last timestamps across all files, takes the midpoint, and converts the local
+    zenith (AltAz alt=90 deg) at that time to ICRS. Reusable as the common field center for
+    multi-TART mosaicking: compute once, hand the same value to every TART.
+
+    Args:
+        hdf_paths: ordered iterable of TART HDF paths.
+
+    Returns:
+        ``(ra_deg, dec_deg)`` of the local zenith at the global mid-time, in ICRS.
+
+    Raises:
+        ValueError: if ``hdf_paths`` is empty.
+    """
+
+    t_lo = t_hi = None
+    config = None
+    for path in hdf_paths:
+        meta = read_metadata(path)  # timestamps and site only; no MSv4 tree needed
+        config = config or meta["config"]  # site from the first file; all inputs share one site
+        lo, hi = float(meta["time"].min()), float(meta["time"].max())
+        t_lo = lo if t_lo is None else min(t_lo, lo)
+        t_hi = hi if t_hi is None else max(t_hi, hi)
+    if config is None:
+        raise ValueError("no HDF files provided")
+
+    t_mid = 0.5 * (t_lo + t_hi)
+    loc = EarthLocation(lat=config["lat"] * u.deg, lon=config["lon"] * u.deg, height=config["alt"] * u.m)
+    aa = AltAz(az=0.0 * u.deg, alt=90.0 * u.deg, obstime=Time(t_mid, format="unix", scale="utc"), location=loc)
+    icrs = SkyCoord(aa).icrs
+    return float(icrs.ra.deg), float(icrs.dec.deg)

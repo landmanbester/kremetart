@@ -4,7 +4,7 @@ The quiescent prior of the kremetart design note (sec:iwp, sec:kf): each pixel's
 a q=1 integrated Wiener process observed in noise, and the Kalman filter whitens it. All
 functions are ``xp``-injectable -- pass ``xp=numpy`` (CPU tests) or ``xp=cupy`` (the GPU operator)
 -- and vectorise over the leading pixel axis. See
-docs/superpowers/specs/2026-06-17-smoovie-iwp-filter-design.md.
+docs/design/iwp-filter.md.
 """
 
 from __future__ import annotations

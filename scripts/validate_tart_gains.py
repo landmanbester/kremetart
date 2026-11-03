@@ -3,7 +3,7 @@
 Images one frame of one TART HDF three ways -- no calibration, TART's stored gains, and our StefCAL
 phase-only gains -- and reports the pixel correlation of each against the TART-calibrated image over
 above-horizon pixels. A high ``corr(ours, TART)`` (vs ~0 for no-cal) means our gains recover the
-TART-quality image. Uses the gridless HEALPix imager on the CPU, so no GPU/Holoscan is needed.
+TART-quality image. Uses the dirty imager stage on the CPU, so no GPU/Holoscan is needed.
 
 Example:
 
@@ -19,11 +19,12 @@ import numpy as np
 import xarray as xr
 from stefcal_calibrate import solve_file_gains
 
-from kremetart.imaging.healpix import image_frame, make_pixel_grid
+from kremetart.imaging.dirty_imager import DirtyImager
+from kremetart.imaging.sky_grid import SkyGrid
+from kremetart.imaging.snapshot import Snapshot
 from kremetart.utils import partition_datatree
-from kremetart.utils.beam import airy_power_beam
 from kremetart.utils.gains import apply_inverse_gains
-from kremetart.utils.geometry import zenith_icrs_vectors
+from kremetart.utils.geometry import equatorial_baselines, zenith_icrs_vectors
 
 
 def main() -> None:
@@ -58,14 +59,19 @@ def main() -> None:
     gains_ours, _names, _ref = solve_file_gains(hdf, cache, use_beam=not args.no_beam)
     g_ours = np.where(np.isfinite(gains_ours), np.exp(1j * np.angle(gains_ours)), 0.0)  # phase-only
 
-    pix = make_pixel_grid(args.nside, nest=True)
+    grid = SkyGrid.build(args.nside, nest=True, apply_beam=True, xp=np)
+    imager = DirtyImager(grid)
+    pix = grid.pix_vec
     bore = zenith_icrs_vectors(times, lat, lon, alt)
     frame = args.frame if args.frame is not None else vis.shape[0] // 2
+    b_rot = equatorial_baselines(bl_itrs, times[frame : frame + 1], xp=np)[0]
 
     def image(gains):
         vis_c, wgt_c = apply_inverse_gains(vis[frame : frame + 1], wgt[frame : frame + 1], gains, a1, a2)
-        beam = airy_power_beam(pix, bore[frame], freqs)
-        return image_frame(vis_c, wgt_c, times[frame : frame + 1], bl_itrs, pix, freqs, beam=beam, xp=np)
+        snapshot = Snapshot(
+            vis=vis_c[0], weight=wgt_c[0], b_rot=b_rot, boresight=bore[frame], time=float(times[frame]), freqs=freqs
+        )
+        return imager.image(snapshot)
 
     img_nocal = image(np.ones(n_ant, dtype=complex))
     img_tart = image(g_tart)
