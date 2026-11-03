@@ -140,10 +140,11 @@ jobs:
       - name: Download CyberEther
         if: env.SKIP_CHECKS != 'true' && steps.cyberether-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/cyberether"
-          curl -fsSL -o "$RUNNER_TEMP/cyberether.tar.gz" \
+          # Relative paths: Git Bash's tar reads the "D:" of a Windows path as a remote host.
+          mkdir -p "$RUNNER_TEMP/cyberether" && cd "$RUNNER_TEMP/cyberether"
+          curl -fsSL -o cyberether.tar.gz \
             "https://github.com/luigifcruz/CyberEther/releases/download/$CYBERETHER_VERSION/${{ matrix.cyberether }}.tar.gz"
-          tar xzf "$RUNNER_TEMP/cyberether.tar.gz" -C "$RUNNER_TEMP/cyberether"
+          tar xzf cyberether.tar.gz && rm cyberether.tar.gz
 
       - name: Point the tests at CyberEther
         if: env.SKIP_CHECKS != 'true'
