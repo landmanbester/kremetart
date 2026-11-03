@@ -13,6 +13,7 @@ import ast
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -114,6 +115,7 @@ def test_find_cyberether_names_the_appimages_next_to_a_wrong_path(
         find_cyberether()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no executable bit")
 def test_find_cyberether_asks_for_chmod_on_a_non_executable_appimage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

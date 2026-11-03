@@ -1,6 +1,6 @@
 """Host-side helpers shared by the web sink operator and the frame server.
 
-Pure numpy/healpy — no GPU, no web framework. ``LatestFrameHolder`` is the thread-safe
+Pure NumPy — no GPU, no web framework. ``LatestFrameHolder`` is the thread-safe
 bridge between the GXF scheduler thread (the sink writes) and the asyncio server thread
 (the connection tasks read). One latest-wins slot per named output.
 """
@@ -11,8 +11,9 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-import healpy as hp
 import numpy as np
+
+from kremetart.utils.healpix_geometry import lonlat_to_vec, pixel_corners
 
 NAMES: tuple[str, ...] = ("dirty", "tikhonov", "l1", "smooth", "znorm")
 SYMMETRIC: frozenset[str] = frozenset({"znorm"})
@@ -107,9 +108,8 @@ def _order(nest: bool) -> str:
 
 def geometry_message(name: str, nside: int, nest: bool, *, unit: str = "") -> dict:
     """Per-name pixel-corner geometry + unit label, sent once on connect."""
-    npix = hp.nside2npix(nside)
-    vecs = hp.boundaries(nside, np.arange(npix), step=1, nest=nest)  # (npix, 3, 4)
-    corners = np.transpose(vecs, (0, 2, 1)).astype(np.float32)  # (npix, 4, 3)
+    npix = 12 * nside * nside
+    corners = pixel_corners(nside, nest=nest).astype(np.float32)  # (npix, 4, 3)
     return {
         "type": "geometry",
         "name": name,
@@ -128,14 +128,14 @@ def frame_header(name: str, nside: int, nest: bool) -> dict:
         "name": name,
         "nside": int(nside),
         "order": _order(nest),
-        "npix": int(hp.nside2npix(nside)),
+        "npix": 12 * int(nside) * int(nside),
     }
 
 
 def tracks_payload(tracks: dict[str, list[tuple[int, float, float, float]]]) -> dict:
     """Convert satellite_tracks output into a one-shot ``tracks`` control message.
 
-    Each (ra_deg, dec_deg) becomes a unit vector via ``hp.ang2vec(..., lonlat=True)`` — the
+    Each (ra_deg, dec_deg) becomes a unit vector (:func:`lonlat_to_vec`) — the
     same ICRS frame as the pixel boundaries, so markers land on the imaged sphere directly
     (no projection/rot needed on a real sphere).
     """
@@ -143,7 +143,7 @@ def tracks_payload(tracks: dict[str, list[tuple[int, float, float, float]]]) -> 
     for name, points in tracks.items():
         pts = []
         for seq, ra_deg, dec_deg, flux in points:
-            x, y, z = (float(v) for v in hp.ang2vec(ra_deg, dec_deg, lonlat=True))
+            x, y, z = (float(v) for v in lonlat_to_vec(ra_deg, dec_deg))
             pts.append({"seq": int(seq), "xyz": [x, y, z], "flux": float(flux)})
         sats.append({"name": name, "points": pts})
     return {"type": "tracks", "sats": sats}

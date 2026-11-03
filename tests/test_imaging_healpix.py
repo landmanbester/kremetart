@@ -1,6 +1,7 @@
 """Unit tests for the HEALPix gridless DFT operator (CPU, xp=numpy)."""
 
 import numpy as np
+import pytest
 
 from kremetart.imaging.healpix import (
     dft_adjoint,
@@ -23,8 +24,8 @@ def test_make_pixel_grid_shape_and_unit_norm():
     np.testing.assert_allclose(np.linalg.norm(pix, axis=1), 1.0, atol=1e-12)
 
 
-def test_make_pixel_grid_nested_matches_healpy():
-    import healpy as hp
+def test_make_pixel_grid_nested_matches_healpy() -> None:
+    hp = pytest.importorskip("healpy")  # the reference implementation; no Windows wheels
 
     nside = 4
     pix = make_pixel_grid(nside, xp=np)  # nest=True default

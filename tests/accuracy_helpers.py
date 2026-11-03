@@ -10,6 +10,7 @@ from __future__ import annotations
 from types import ModuleType
 
 import numpy as np
+import pytest
 
 LIGHTSPEED = 299792458.0
 
@@ -125,7 +126,7 @@ def recovered_direction_and_flux(dmap, pix_vec, nside, *, nest: bool = True, nea
     source, pass ``near`` (a unit vector) and ``search_radius_deg`` to restrict the peak search to
     that hemisphere/neighbourhood, removing the mirror ambiguity.
     """
-    import healpy as hp
+    hp = pytest.importorskip("healpy")  # query_disc; no Windows wheels
 
     dmap = np.asarray(dmap)
     pix_vec = np.asarray(pix_vec)

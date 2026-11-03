@@ -61,14 +61,26 @@ jobs:
         run: uv run ruff check .
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    # Linux gets every supported Python; macOS (Apple Silicon) and Windows run one, to bound CI time.
+    # No runner has a GPU, so the Holoscan/CuPy tests skip everywhere; the loop and CyberEther (CPU)
+    # runners are tested on every platform.
+    name: Tests (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     env:
       SKIP_CHECKS: 'false'
+      CYBERETHER_VERSION: v1.19.0
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - { os: ubuntu-latest, python-version: "3.11", cyberether: cyberether-linux-x86_64 }
+          - { os: ubuntu-latest, python-version: "3.12", cyberether: cyberether-linux-x86_64 }
+          - { os: ubuntu-latest, python-version: "3.13", cyberether: cyberether-linux-x86_64 }
+          - { os: macos-14, python-version: "3.12", cyberether: cyberether-macos-arm64 }
+          - { os: windows-latest, python-version: "3.12", cyberether: cyberether-windows-x86_64 }
 
     steps:
       - name: Check for skip checks
@@ -110,6 +122,36 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: uv sync --group test
 
+      # The CyberEther runner tests need the CyberEther executable. The portable builds are the
+      # executable plus one library; headless CyberEther still opens a Vulkan device, which GPU-less
+      # Linux runners get from Mesa's software driver (lavapipe).
+      - name: Install Vulkan (software)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libgudev-1.0-0
+
+      - name: Cache CyberEther
+        if: env.SKIP_CHECKS != 'true'
+        id: cyberether-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cyberether
+          key: ${{ matrix.cyberether }}-${{ env.CYBERETHER_VERSION }}
+
+      - name: Download CyberEther
+        if: env.SKIP_CHECKS != 'true' && steps.cyberether-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/cyberether"
+          curl -fsSL -o "$RUNNER_TEMP/cyberether.tar.gz" \
+            "https://github.com/luigifcruz/CyberEther/releases/download/$CYBERETHER_VERSION/${{ matrix.cyberether }}.tar.gz"
+          tar xzf "$RUNNER_TEMP/cyberether.tar.gz" -C "$RUNNER_TEMP/cyberether"
+
+      - name: Point the tests at CyberEther
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          exe="$RUNNER_TEMP/cyberether/cyberether"
+          [ "$RUNNER_OS" = "Windows" ] && exe="$exe.exe"
+          echo "KREMETART_CYBERETHER=$exe" >> "$GITHUB_ENV"
+
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
-        run: uv run pytest -v
+        run: uv run pytest -v -rs

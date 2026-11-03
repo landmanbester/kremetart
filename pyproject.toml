@@ -15,10 +15,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
     "typer>=0.12.0",
-    "healpy>=1.19.0",
+    "astropy-healpix>=1.0",
+    # Only the parked Mollweide renderer (utils/visualisation.py) needs healpy, which has no Windows wheels.
+    "healpy>=1.19.0 ; sys_platform != 'win32'",
     "pyyaml>=6.0",
     "numpy>=2.0.0",
     "scipy>=1.15.0",
@@ -26,7 +31,8 @@ dependencies = [
     "astropy>=6.0.0",
     "matplotlib>=3.8.0",
     "zarr>=2.18.3",
-    "holoscan-cu13>=4.3.0",
+    # The GPU stack is Linux-only: Holoscan ships Linux wheels only, and CyberEther only has CUDA builds there.
+    "holoscan-cu13>=4.3.0 ; sys_platform == 'linux'",
     "dask[array]>=2024.1.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
@@ -34,13 +40,10 @@ dependencies = [
     # cupy-cuda13x finds it via cuda-pathfinder but does not pull it, and the system CUDA-13
     # toolkit here ships no cuBLAS. NB: the real wheel is unsuffixed "nvidia-cublas"; the
     # "nvidia-cublas-cu13" name is only a 0.0.1 redirect stub.
-    "nvidia-cublas>=13.0,<14",
+    "nvidia-cublas>=13.0,<14 ; sys_platform == 'linux'",
     "tart-tools>=1.4.5 ; python_version >= '3.11'",
     "netcdf4>=1.7.4 ; python_version >= '3.11'",
     "tart[all]>=1.4.5  ; python_version >= '3.11'",
-    "arcae>=0.5.2,<0.6.0 ; python_version >= '3.11'",
-    "xarray-ms>=0.5.5 ; python_version >= '3.11'",
-    "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "tart-msv4>=0.1.2 ; python_version >= '3.11'",
 ]
 
@@ -94,6 +97,9 @@ dev = [
 ]
 test = [
     "pytest>=8.0.0",
+    # Measurement Set oracles (tart2ms comparisons); casacore has no Windows wheels.
+    "arcae>=0.5.2,<0.6.0 ; python_version >= '3.11' and sys_platform != 'win32'",
+    "xarray-ms>=0.5.5 ; python_version >= '3.11' and sys_platform != 'win32'",
     "pytest-cov>=5.0.0",
     "pyproj>=3.6.0",
     "gdown>=5.0.0",

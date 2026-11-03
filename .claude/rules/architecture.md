@@ -79,8 +79,14 @@ inside the code (`core.runner.cuda_available`); tests force a path by monkeypatc
 
 ## Packaging and releases
 
-- One dependency list in `pyproject.toml`: `pip install kremetart` installs everything, including the
-  CUDA 13 stack (Holoscan, CuPy, cuBLAS).
+- One dependency list in `pyproject.toml`: `pip install kremetart` installs everything the platform can
+  run. Linux, macOS (Apple Silicon, 14+) and Windows x64 are supported; platform markers keep the CUDA 13
+  stack (Holoscan, CuPy, cuBLAS) on Linux and healpy off Windows. Every runtime dependency must ship
+  wheels for all three: check a new one with
+  `uv pip compile --python-platform <x86_64-pc-windows-msvc|aarch64-apple-darwin> --only-binary :all:`.
+- HEALPix geometry comes from astropy-healpix (`utils/healpix_geometry.py`), which has wheels everywhere;
+  healpy has none for Windows and is only used by the parked Mollweide renderer and as a test oracle.
+  Measurement Set readers (`arcae`, `xarray-ms`) are test-only for the same reason.
 - `Dockerfile` builds the runtime image; `.github/workflows/publish-container.yml` pushes it to
   `ghcr.io/landmanbester/kremetart` (version tag on release tags, `latest` on `main`, per-branch on PRs).
 - Release with `uv run tbump <version>`: it regenerates `CHANGELOG.md`, refreshes `uv.lock`, then tags

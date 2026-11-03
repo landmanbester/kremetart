@@ -2,7 +2,6 @@ import asyncio
 import json
 import threading
 
-import healpy as hp
 import numpy as np
 
 from kremetart.utils.healpix_viz import (
@@ -102,7 +101,7 @@ def test_holder_is_thread_safe_under_concurrent_puts():
 
 def test_geometry_message_shape():
     nside = 2
-    npix = hp.nside2npix(nside)  # 48
+    npix = 12 * nside * nside  # 48
     msg = geometry_message("dirty", nside, nest=True)
     assert msg["type"] == "geometry"
     assert msg["name"] == "dirty"
@@ -126,7 +125,8 @@ def test_tracks_payload_converts_radec_to_unit_vectors():
     assert sat["points"][0]["seq"] == 0
     assert sat["points"][0]["flux"] == 1.5
     x, y, z = sat["points"][0]["xyz"]
-    expected = hp.ang2vec(10.0, -20.0, lonlat=True)
+    ra, dec = np.radians(10.0), np.radians(-20.0)
+    expected = [np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)]
     assert np.allclose([x, y, z], expected, atol=1e-6)
     assert np.isclose(x * x + y * y + z * z, 1.0, atol=1e-6)  # unit vector
     assert sat["points"][1]["seq"] == 1

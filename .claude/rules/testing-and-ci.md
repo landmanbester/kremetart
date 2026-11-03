@@ -12,7 +12,13 @@ Read this when editing `tests/**` or `.github/workflows/**`.
   shape.
 - New behaviour in a stage gets a NumPy test; GPU agreement is checked once per chain, not per test.
 
-## 2. GPU, real-data and parity tests
+## 2. Platforms, GPU, real-data and parity tests
+
+CI runs the suite on Ubuntu (Python 3.11–3.13), macOS 14 on Apple Silicon (3.12) and Windows (3.12),
+none with a GPU. Each job downloads that platform's portable CyberEther build and sets
+`KREMETART_CYBERETHER`; Linux gets software Vulkan (lavapipe) for it. A dependency that is missing on a
+platform (healpy and the Measurement Set readers on Windows, CuPy and Holoscan off Linux) is skipped with
+`pytest.importorskip` where the test uses it, so the rest of the module still runs there.
 
 These are gated so the default suite runs on CPU-only CI runners:
 
