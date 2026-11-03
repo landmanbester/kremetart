@@ -16,7 +16,7 @@ Read this when editing `tests/**` or `.github/workflows/**`.
 
 CI runs the suite on Ubuntu (Python 3.11–3.13), macOS 14 on Apple Silicon (3.12) and Windows (3.12),
 none with a GPU. Each job downloads that platform's portable CyberEther build and sets
-`KREMETART_CYBERETHER`; Linux gets software Vulkan (lavapipe) for it. A dependency that is missing on a
+`KREMETART_CYBERETHER`; Linux and Windows get software Vulkan (Mesa lavapipe) for it, macOS uses Metal. A dependency that is missing on a
 platform (healpy and the Measurement Set readers on Windows, CuPy and Holoscan off Linux) is skipped with
 `pytest.importorskip` where the test uses it, so the rest of the module still runs there.
 

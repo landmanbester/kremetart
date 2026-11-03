@@ -69,6 +69,7 @@ jobs:
     env:
       SKIP_CHECKS: 'false'
       CYBERETHER_VERSION: v1.19.0
+      MESA_WIN_VERSION: 26.2.4
     defaults:
       run:
         shell: bash
@@ -123,11 +124,35 @@ jobs:
         run: uv sync --group test
 
       # The CyberEther runner tests need the CyberEther executable. The portable builds are the
-      # executable plus one library; headless CyberEther still opens a Vulkan device, which GPU-less
-      # Linux runners get from Mesa's software driver (lavapipe).
+      # executable plus one library; headless CyberEther still opens a Vulkan (or, on macOS, Metal)
+      # device, which GPU-less Linux and Windows runners get from Mesa's software driver (lavapipe).
       - name: Install Vulkan (software)
         if: env.SKIP_CHECKS != 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libgudev-1.0-0
+
+      # Windows runners have the Vulkan loader but no driver; Mesa's lavapipe from mesa-dist-win fills in.
+      - name: Cache Vulkan (software, Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        id: lavapipe-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/lavapipe
+          key: lavapipe-${{ env.MESA_WIN_VERSION }}
+
+      - name: Download Vulkan (software, Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows' && steps.lavapipe-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/lavapipe" && cd "$RUNNER_TEMP/lavapipe"
+          curl -fsSL -o mesa.7z \
+            "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_WIN_VERSION/mesa3d-$MESA_WIN_VERSION-release-msvc.7z"
+          7z e -y mesa.7z x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json && rm mesa.7z
+
+      - name: Use the software Vulkan driver (Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        run: |
+          icd="$(cygpath -w "$RUNNER_TEMP/lavapipe/lvp_icd.x86_64.json")"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
 
       - name: Cache CyberEther
         if: env.SKIP_CHECKS != 'true'
