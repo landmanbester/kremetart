@@ -171,11 +171,12 @@ def test_a_failing_block_raises_its_traceback(prepared: Path, tmp_path: Path, mo
     def broken(*args: Any, **kwargs: Any) -> dict[str, Any]:
         graph = flowgraph(*args, **kwargs)
         source = graph["graph"][0]
-        source["config"]["code"] = source["config"]["code"].replace(str(prepared), str(tmp_path / "missing.zarr"))
+        # The adapter class name, unlike a path, appears verbatim in the stub on every platform.
+        source["config"]["code"] = source["config"]["code"].replace("SnapshotSource", "MissingSource")
         return graph
 
     monkeypatch.setattr(cyberether_runner, "flowgraph", broken)
-    with pytest.raises(RuntimeError, match="block 'source' failed"):
+    with pytest.raises(RuntimeError, match="block 'source' failed:(.|\n)*MissingSource"):
         run_cyberether(prepared, tmp_path / "out.zarr", ImagingSettings(nside=2), device="cpu")
 
 
