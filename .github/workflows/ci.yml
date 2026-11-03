@@ -69,6 +69,8 @@ jobs:
     env:
       SKIP_CHECKS: 'false'
       CYBERETHER_VERSION: v1.19.0
+      # uv otherwise follows .python-version (3.11) and ignores the matrix Python.
+      UV_PYTHON: ${{ matrix.python-version }}
       MESA_WIN_VERSION: 26.2.4
       # The CyberEther tests image a few tiny snapshots: a stalled run should fail fast, with its log.
       KREMETART_CYBERETHER_STALL_SECONDS: 120
@@ -184,6 +186,59 @@ jobs:
           exe="$RUNNER_TEMP/cyberether/cyberether"
           [ "$RUNNER_OS" = "Windows" ] && exe="$exe.exe"
           echo "KREMETART_CYBERETHER=$exe" >> "$GITHUB_ENV"
+
+      # TEMPORARY: does a plain NumPy Python block run under CyberEther on Windows, without kremetart?
+      - name: Probe CyberEther Python blocks (Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          probe="$(cygpath -w "$RUNNER_TEMP/probe.txt")"
+          py="$(cygpath -w "$PWD/.venv/Scripts/python.exe")"
+          cat > "$RUNNER_TEMP/probe.yml" <<YAML
+          ---
+          version: 2
+          title: probe
+          graph:
+            - name: source
+              module: python
+              device: cpu
+              runtime: python
+              provider: generic
+              config:
+                code: |-
+                  import numpy as np
+                  n = [0]
+                  def compute(ctx):
+                      if n[0] >= 3:
+                          return SKIP
+                      ctx.outputs[0][...] = n[0]
+                      n[0] += 1
+                inputCount: 0
+                outputCount: 1
+                outputTensorSpecs:
+                  - {shape: '[4]', dtype: F64, device: cpu}
+                throttled: false
+            - name: sink
+              module: python
+              device: cpu
+              runtime: python
+              provider: generic
+              config:
+                code: |-
+                  def compute(ctx):
+                      with open(r'$probe', 'a') as f:
+                          f.write(f'got {float(ctx.inputs[0][0])}\n')
+                inputCount: 1
+                outputCount: 0
+                throttled: false
+              input:
+                input0: '\${graph.source.output.output0}'
+          YAML
+          cat "$RUNNER_TEMP/probe.yml"
+          timeout 60 "$KREMETART_CYBERETHER" --headless --dependency-policy deny --python-runtime "$py" "$(cygpath -w "$RUNNER_TEMP/probe.yml")" > "$RUNNER_TEMP/probe.log" 2>&1 || echo "cyberether exit $?"
+          echo "--- log"; cat "$RUNNER_TEMP/probe.log"
+          echo "--- sink output"; cat "$RUNNER_TEMP/probe.txt" 2>/dev/null || echo "(none)"
 
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
