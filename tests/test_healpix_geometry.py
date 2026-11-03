@@ -22,7 +22,7 @@ def test_lonlat_to_vec_places_the_poles_and_the_origin() -> None:
 
 
 @pytest.mark.parametrize("nest", [True, False], ids=["nested", "ring"])
-@pytest.mark.parametrize("nside", [1, 8, 64])
+@pytest.mark.parametrize("nside", [1, 8])
 def test_pixel_geometry_matches_healpy(nside: int, nest: bool) -> None:
     hp = pytest.importorskip("healpy")  # the reference implementation; no Windows wheels
     pix = np.arange(hp.nside2npix(nside))

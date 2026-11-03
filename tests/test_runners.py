@@ -123,7 +123,10 @@ def test_holoscan_runner_agrees_with_the_loop_runner(
     got = xr.open_zarr(tmp_path / "holoscan.zarr")
     ref = xr.open_zarr(tmp_path / "loop.zarr")
     assert set(got.data_vars) == set(settings.stored_names)
+    # The graph fans the IWP outputs to both the writer and the web sink; the sink filled every stream.
     assert holder.current_seq == NFRAMES - 1
+    slots = holder.snapshot()
+    assert all(slots[name] is not None and len(slots[name].data) == settings.npix * 4 for name in slots)
     for var in settings.stored_names:
         g, r = got[var].values.astype(np.float64), ref[var].values.astype(np.float64)
         err = np.linalg.norm(g - r, axis=1) / np.maximum(np.linalg.norm(r, axis=1), 1e-30)
