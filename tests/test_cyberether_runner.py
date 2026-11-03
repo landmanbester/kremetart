@@ -189,5 +189,5 @@ def test_a_rejected_flowgraph_raises_instead_of_hanging(
         return graph
 
     monkeypatch.setattr(cyberether_runner, "flowgraph", broken)
-    with pytest.raises(RuntimeError, match="rejected the flowgraph"):
+    with pytest.raises(RuntimeError, match="CyberEther reported errors"):
         run_cyberether(prepared, tmp_path / "out.zarr", ImagingSettings(nside=2), device="cpu")

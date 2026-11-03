@@ -62,7 +62,7 @@ class MapStoreSink:
         write_maps(self.output, time, maps)
         self.written += 1
         partial = self.progress.with_suffix(".partial")
-        partial.write_text(str(self.written))
+        partial.write_text(str(self.written), encoding="utf-8")
         os.replace(partial, self.progress)  # atomic: a reader never sees a half-written count
 
 

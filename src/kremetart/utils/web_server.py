@@ -91,7 +91,7 @@ class FrameServer:
 
     def create_app(self) -> FastAPI:
         static_dir = resources.files("kremetart") / "static"
-        index_html = (static_dir / "index.html").read_text()
+        index_html = (static_dir / "index.html").read_text(encoding="utf-8")
         geom_msgs = [geometry_message(n, self.nside, self.nest, unit=self.units.get(n, "")) for n in self.names]
         headers = {n: frame_header(n, self.nside, self.nest) for n in self.names}
 
