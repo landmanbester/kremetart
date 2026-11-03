@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 import kremetart.cli as cli
 from kremetart.cli import app
+from kremetart.core.runner import RUNNERS
 
 runner = CliRunner()
 CORE_SMOOVIE = Path(cli.__file__).parent / "core" / "smoovie.py"
@@ -69,6 +70,7 @@ def test_smoovie_forwards_every_option(captured: dict, tmp_path: Path) -> None:
         "serve": False,
         "port": 9090,
         "open_browser": True,
+        "runner": "cyberether",
     }
     args = ["smoovie"]
     for name, value in expected.items():
@@ -93,6 +95,17 @@ def _core_parameters() -> list[str]:
     tree = ast.parse(CORE_SMOOVIE.read_text())
     func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "smoovie")
     return [a.arg for a in func.args.posonlyargs + func.args.args + func.args.kwonlyargs]
+
+
+def test_cli_runner_choices_are_the_core_runners() -> None:
+    assert tuple(name.value for name in cli.RunnerName) == RUNNERS
+
+
+def test_cli_rejects_an_unknown_runner(captured: dict, tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["smoovie", "--hdf-dir", str(tmp_path), "--output", str(tmp_path / "o"), "--runner", "gnuradio"]
+    )
+    assert result.exit_code != 0 and captured == {}
 
 
 def test_cli_options_match_the_core_signature() -> None:

@@ -16,6 +16,7 @@ import xarray as xr
 
 import kremetart.core.runner as runner_module
 import kremetart.core.smoovie as sm
+from kremetart.core.loop_runner import run_loop
 
 
 class FakeServer:
@@ -55,6 +56,38 @@ def prepare_kwargs(cpu: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr(cpu, "prepare_msv4_zarr", spy)
     return calls
+
+
+def test_smoovie_runs_the_requested_runner(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    calls: list[str] = []
+
+    def fake_cyberether(
+        prepared: Path, output: Path, settings: object, holder: object, *, device: str, window: bool
+    ) -> None:
+        calls.append(f"{device}, window={window}")
+        run_loop(prepared, output, settings, holder)
+
+    monkeypatch.setattr(runner_module, "run_cyberether", fake_cyberether)
+    monkeypatch.setattr(runner_module, "cupy_device_available", lambda: False)
+    monkeypatch.setattr(runner_module, "find_cyberether", lambda: "/opt/cyberether")
+    cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, nframes=1, serve=False, runner="cyberether")
+    assert calls == ["cpu, window=False"]
+    assert "CyberEther (CPU)" in capsys.readouterr().out
+
+
+def test_smoovie_fails_fast_when_cyberether_is_missing(
+    cpu: ModuleType, hdf_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_prepare(*args: object, **kwargs: object) -> None:
+        raise AssertionError("snapshots must not be prepared when the runner cannot start")
+
+    monkeypatch.setattr(cpu, "prepare_msv4_zarr", no_prepare)
+    monkeypatch.setenv("KREMETART_CYBERETHER", str(tmp_path / "missing.AppImage"))
+    with pytest.raises(FileNotFoundError, match="is not a file"):
+        cpu.smoovie(hdf_dir=hdf_dir, output=tmp_path / "out.zarr", nside=1, runner="cyberether")
+    assert FakeServer.last == {}  # the web server never started
 
 
 def test_smoovie_requires_both_phase_components(tmp_path: Path) -> None:

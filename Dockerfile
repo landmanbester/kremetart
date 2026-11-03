@@ -15,20 +15,20 @@ FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
 # Make the GPU visible when launched under the NVIDIA Container Toolkit. The runtime base
 # already sets these; re-affirmed here as documentation. NB: this image only *uses* the GPU
 # when the container is started with GPU access (`docker/podman run --gpus all`, or
-# `apptainer/singularity --nv`). Without that the cupy/holoscan pipeline has no CUDA device.
+# `apptainer/singularity --nv`). Without it, smoovie falls back to the (slower) CPU loop runner.
 ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     CUDA_HOME=/usr/local/cuda
 
 # System packages (the cuda-* ones come from the NVIDIA CUDA apt repo already configured in the
 # base image; the -13-0 suffix must track the base image's CUDA major.minor):
-#   ffmpeg              -> core/smoovie.py encodes the rendered PNG frames to mp4 via subprocess;
-#                          smoovie hard-fails ("ffmpeg not found on PATH") without it.
+#   ffmpeg              -> utils/visualisation.py's parked Mollweide movie renderer encodes PNG frames
+#                          to mp4 via subprocess (not used by smoovie).
 #   cuda-cudart-dev-13-0 + cuda-cccl-13-0
 #                       -> CUDA headers (cuda_runtime.h, CUB/Thrust/libcu++). cupy JIT-compiles its
 #                          elementwise/reduction kernels at runtime via NVRTC and needs these; the
 #                          "runtime" base ships the CUDA *libraries* but not the *headers*, so
-#                          without them every cupy kernel (e.g. operators/dft_lm.py's cp.linalg.solve)
+#                          without them every cupy kernel (e.g. the stages' DFTs and CG updates)
 #                          dies with "Failed to find CUDA headers". A few MB -- far leaner than the
 #                          full "-devel" base. cupy locates them via CUDA_HOME (set below).
 #   libgomp1            -> OpenMP runtime that the numpy/scipy/healpy wheels dlopen.

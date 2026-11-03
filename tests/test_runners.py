@@ -15,26 +15,42 @@ import pytest
 import xarray as xr
 
 import kremetart.core.runner as runner_module
+from kremetart.core.cyberether_runner import run_cyberether
 from kremetart.core.loop_runner import run_loop
 from kremetart.core.runner import select_runner
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import LatestFrameHolder
-from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
-
-NFRAMES = 3
+from tests.conftest import PREPARED_NFRAMES as NFRAMES
 
 requires_gpu = pytest.mark.skipif(not runner_module.cuda_available(), reason="requires a CUDA device + holoscan")
-
-
-@pytest.fixture(scope="module")
-def prepared(hdf_paths: list[Path], tmp_path_factory: pytest.TempPathFactory) -> Path:
-    path = tmp_path_factory.mktemp("prepared") / "prepared.zarr"
-    return prepare_msv4_zarr(hdf_paths, path, correct_gains=True, nframes=NFRAMES)
 
 
 def test_select_runner_without_gpu_is_the_loop_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner_module, "cuda_available", lambda: False)
     assert select_runner().run is run_loop
+    assert select_runner("loop").run is run_loop
+
+
+def test_select_runner_refuses_holoscan_without_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner_module, "cuda_available", lambda: False)
+    with pytest.raises(RuntimeError, match="needs a CUDA device"):
+        select_runner("holoscan")
+
+
+@pytest.mark.parametrize("name, window", [("cyberether", False), ("cyberether-gui", True)])
+@pytest.mark.parametrize("gpu, device", [(False, "cpu"), (True, "cuda")])
+def test_select_runner_cyberether_detects_the_device(
+    monkeypatch: pytest.MonkeyPatch, gpu: bool, device: str, name: str, window: bool
+) -> None:
+    monkeypatch.setattr(runner_module, "cupy_device_available", lambda: gpu)
+    monkeypatch.setattr(runner_module, "find_cyberether", lambda: "/opt/cyberether")
+    choice = select_runner(name)
+    assert choice.run.func is run_cyberether and choice.run.keywords == {"device": device, "window": window}
+
+
+def test_select_runner_rejects_an_unknown_name() -> None:
+    with pytest.raises(ValueError, match="unknown runner"):
+        select_runner("gnuradio")
 
 
 @pytest.mark.parametrize(
