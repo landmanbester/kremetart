@@ -147,12 +147,17 @@ jobs:
             "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_WIN_VERSION/mesa3d-$MESA_WIN_VERSION-release-msvc.7z"
           7z e -y mesa.7z x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json && rm mesa.7z
 
-      - name: Use the software Vulkan driver (Windows)
+      # The runner is elevated, and the Vulkan loader ignores VK_DRIVER_FILES in elevated processes, so
+      # the driver is registered the way installed drivers are.
+      - name: Register the software Vulkan driver (Windows)
         if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        shell: pwsh
         run: |
-          icd="$(cygpath -w "$RUNNER_TEMP/lavapipe/lvp_icd.x86_64.json")"
-          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
-          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          $icd = Join-Path $env:RUNNER_TEMP "lavapipe\lvp_icd.x86_64.json"
+          $key = "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name $icd -Value 0 -PropertyType DWord -Force | Out-Null
+          Get-ItemProperty -Path $key
 
       - name: Cache CyberEther
         if: env.SKIP_CHECKS != 'true'
