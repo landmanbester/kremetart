@@ -6,7 +6,8 @@ a **runner** drives them: Holoscan on a GPU, an in-process NumPy loop on the CPU
 flowgraph (`--runner cyberether`, opt-in while the port in #47 matures). Linux, macOS (Apple Silicon) and
 Windows are supported; Holoscan and CUDA are Linux-only.
 
-Domain vocabulary is in `GLOSSARY.md`; settled decisions are in `docs/adr/`.
+Domain vocabulary is in `GLOSSARY.md`; settled decisions are in `docs/adr/`; the derivations the code cites
+are in `docs/design/`.
 
 | Rule file | Read it when editing |
 |---|---|

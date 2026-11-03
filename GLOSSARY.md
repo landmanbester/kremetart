@@ -11,7 +11,7 @@ snapshot**) follow the [tart-msv4 glossary](https://github.com/landmanbester/tar
 **Snapshot**:
 The correlations of every baseline at a single timestamp, together with what imaging them needs: their
 weights, rotated baselines, boresight and frequencies. One snapshot yields one map per stage.
-_Avoid_: frame (reserved for coordinate frames and movie frames), integration, time step
+_Avoid_: frame (reserved for coordinate frames and viewer frames), integration, time step
 
 **Rotated baselines**:
 A snapshot's baselines expressed in the celestial frame of the sky grid at that snapshot's timestamp, so

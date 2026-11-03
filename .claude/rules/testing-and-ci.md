@@ -11,6 +11,9 @@ Read this when editing `tests/**` or `.github/workflows/**`.
   (`tests/test_smoovie.py`). A test that has to reach past an interface is a sign the module is the wrong
   shape.
 - New behaviour in a stage gets a NumPy test; GPU agreement is checked once per chain, not per test.
+- One test per behaviour, at the highest interface that shows it. Test a lower-level function directly only
+  for a property the interface test cannot see (e.g. the Hessian's self-adjointness in
+  `test_imaging_healpix.py`). Investigations against other tools are one-off scripts, not tests.
 
 ## 2. Platforms, GPU, real-data and parity tests
 
@@ -24,7 +27,7 @@ These are gated so the default suite runs on CPU-only CI runners:
 
 | Test | Runs when |
 |---|---|
-| Holoscan/CuPy tests (Holoscan runner in `test_runners.py`, fan-out in `test_serve_integration.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
+| Holoscan/CuPy tests (Holoscan runner and its viewer fan-out in `test_runners.py`, CuPy agreement in `test_imaging_stages.py`) | a CUDA device is present (skip otherwise) |
 | CyberEther runs in `test_cyberether_runner.py` (its CUDA case also needs a CUDA device) | `KREMETART_CYBERETHER=<AppImage>` or `cyberether` on `PATH` |
 | `test_stefcal_realdata.py` | `KREMETART_REALDATA=1` |
 | `test_calibration.py` tart2ms oracle | `KREMETART_MS_ORACLE=1` |

@@ -80,13 +80,16 @@ inside the code (`core.runner.cuda_available`); tests force a path by monkeypatc
 ## Packaging and releases
 
 - One dependency list in `pyproject.toml`: `pip install kremetart` installs everything the platform can
-  run. Linux, macOS (Apple Silicon, 14+) and Windows x64 are supported; platform markers keep the CUDA 13
-  stack (Holoscan, CuPy, cuBLAS) on Linux and healpy off Windows. Every runtime dependency must ship
-  wheels for all three: check a new one with
+  run. Python 3.11+ on Linux, macOS (Apple Silicon, 14+) and Windows x64; the only platform markers keep
+  the CUDA 13 stack (Holoscan, CuPy, cuBLAS) on Linux. Every runtime dependency must ship wheels for all
+  three: check a new one with
   `uv pip compile --python-platform <x86_64-pc-windows-msvc|aarch64-apple-darwin> --only-binary :all:`.
-- HEALPix geometry comes from astropy-healpix (`utils/healpix_geometry.py`), which has wheels everywhere;
-  healpy has none for Windows and is only used by the parked Mollweide renderer and as a test oracle.
-  Measurement Set readers (`arcae`, `xarray-ms`) are test-only for the same reason.
+- HEALPix geometry comes from astropy-healpix (`utils/healpix_geometry.py`), which has wheels everywhere.
+  healpy (no Windows wheels) is a test-only reference for that geometry, and the Measurement Set readers
+  (`arcae`, `xarray-ms`) are test-only for the same reason.
+- StefCAL (`utils/stefcal.py`, the sky model in `utils/skymodel.py`, `opt.fista`'s operator form, and
+  `utils/satellites.frame_source_directions`) has no command calling it yet: it is kept, and tested
+  directly, for on-the-fly calibration. `scripts/` holds the host-side checks of it against TART's gains.
 - `Dockerfile` builds the runtime image; `.github/workflows/publish-container.yml` pushes it to
   `ghcr.io/landmanbester/kremetart` (version tag on release tags, `latest` on `main`, per-branch on PRs).
 - Release with `uv run tbump <version>`: it regenerates `CHANGELOG.md`, refreshes `uv.lock`, then tags
