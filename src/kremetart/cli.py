@@ -101,7 +101,7 @@ def smoovie(
     ] = RunnerName.auto,
 ) -> None:
     """Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer."""
-    # Deferred so that `kremetart --help` stays fast: smoovie pulls in xarray, healpy and the stages.
+    # Deferred so that `kremetart --help` stays fast: smoovie pulls in xarray, astropy and the stages.
     from kremetart.core.smoovie import smoovie as run_smoovie
 
     run_smoovie(

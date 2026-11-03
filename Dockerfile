@@ -22,8 +22,6 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 
 # System packages (the cuda-* ones come from the NVIDIA CUDA apt repo already configured in the
 # base image; the -13-0 suffix must track the base image's CUDA major.minor):
-#   ffmpeg              -> utils/visualisation.py's parked Mollweide movie renderer encodes PNG frames
-#                          to mp4 via subprocess (not used by smoovie).
 #   cuda-cudart-dev-13-0 + cuda-cccl-13-0
 #                       -> CUDA headers (cuda_runtime.h, CUB/Thrust/libcu++). cupy JIT-compiles its
 #                          elementwise/reduction kernels at runtime via NVRTC and needs these; the
@@ -31,11 +29,10 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 #                          without them every cupy kernel (e.g. the stages' DFTs and CG updates)
 #                          dies with "Failed to find CUDA headers". A few MB -- far leaner than the
 #                          full "-devel" base. cupy locates them via CUDA_HOME (set below).
-#   libgomp1            -> OpenMP runtime that the numpy/scipy/healpy wheels dlopen.
+#   libgomp1            -> OpenMP runtime that the numpy/scipy wheels dlopen.
 #   ca-certificates     -> TLS for pip and for the TART catalogue API (smoovie --overlay-catalog).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg \
         cuda-cudart-dev-13-0 \
         cuda-cccl-13-0 \
         libgomp1 \
@@ -47,10 +44,8 @@ WORKDIR /app
 # Install uv for fast package installation.
 COPY --from=ghcr.io/astral-sh/uv:0.9.8 /uv /usr/local/bin/uv
 
-# The CUDA runtime base ships no Python, and Ubuntu 24.04 would otherwise give Python 3.12.
-# Several deps (tart-tools, netcdf4, tart[all], arcae, xarray-ms, msv4-utils) are gated
-# on `python_version >= '3.11'`, so we let uv provision a standalone Python 3.11 (matching
-# .python-version) into a venv, independent of the base image's system Python.
+# The CUDA runtime base ships no Python, so uv provisions a standalone Python 3.11 (matching
+# .python-version, and kremetart's minimum) into a venv, independent of the base image's system Python.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH
