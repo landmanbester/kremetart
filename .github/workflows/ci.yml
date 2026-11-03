@@ -70,6 +70,8 @@ jobs:
       SKIP_CHECKS: 'false'
       CYBERETHER_VERSION: v1.19.0
       MESA_WIN_VERSION: 26.2.4
+      # The CyberEther tests image a few tiny snapshots: a stalled run should fail fast, with its log.
+      KREMETART_CYBERETHER_STALL_SECONDS: 120
     defaults:
       run:
         shell: bash
