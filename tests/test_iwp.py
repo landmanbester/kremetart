@@ -24,7 +24,8 @@ def test_iwp_transition_closed_form():
 
 def test_innovations_whiten_on_synthetic_iwp():
     """Data from the q=1 IWP + Gaussian-noise model -> normalised innovations ~ N(0,1):
-    mean ~ 0 and mean NIS (E[z^2]) ~ 1 after a warm-up."""
+    mean ~ 0 and mean NIS (E[z^2]) ~ 1 after a warm-up. The Joseph-form covariance stays symmetric PSD
+    and the innovation variance positive at every step, from a diffuse prior onwards."""
     rng = np.random.default_rng(42)
     npix, n, dt = 200, 400, 1.0
     sigma2, r_noise = 0.05, 0.2
@@ -45,6 +46,9 @@ def test_innovations_whiten_on_synthetic_iwp():
     for k in range(n):
         x_filt, p_cov = kalman_predict(x_filt, p_cov, a, q)
         x_filt, p_cov, e, s = kalman_update(x_filt, p_cov, y_obs[:, k], r_noise)
+        assert np.all(s > 0)
+        np.testing.assert_allclose(p_cov, p_cov.transpose(0, 2, 1), rtol=1e-12, atol=1e-9)  # symmetric
+        assert np.all(np.linalg.eigvalsh(p_cov) >= -1e-9)  # PSD
         z.append(e / np.sqrt(s))
     z = np.asarray(z[50:])  # drop warm-up samples
 
