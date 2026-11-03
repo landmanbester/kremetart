@@ -16,6 +16,7 @@ from types import ModuleType
 import numpy as np
 
 from kremetart.utils.geometry import equatorial_baselines
+from kremetart.utils.healpix_geometry import pixel_centres
 
 LIGHTSPEED = 299792458.0
 
@@ -31,12 +32,7 @@ def make_pixel_grid(nside: int, *, nest: bool = True, xp: ModuleType = np):
     Returns:
         ``(npix, 3)`` array of unit vectors, declared to live in the equatorial (ICRS) frame.
     """
-    import healpy as hp
-
-    npix = hp.nside2npix(nside)
-    vec = hp.pix2vec(nside, np.arange(npix), nest=nest)  # tuple of three (npix,) arrays
-    grid = np.stack(vec, axis=1).astype(np.float64)  # (npix, 3)
-    return xp.asarray(grid)
+    return xp.asarray(pixel_centres(nside, nest=nest))
 
 
 def _delay(baselines, pix_vec):

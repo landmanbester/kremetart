@@ -12,8 +12,18 @@ dirty maps.
 ## Installation
 
 ```bash
-pip install kremetart  # CUDA 13 GPU stack (CuPy/Holoscan, healpy, xarray, tart-tools, …)
+pip install kremetart
 ```
+
+kremetart runs on Linux, macOS (Apple Silicon) and Windows. What it can run on depends on the platform:
+
+| Platform | Runners | Notes |
+|---|---|---|
+| Linux x86-64 and arm64 (e.g. DGX Spark) | `loop`, `holoscan`, `cyberether` | `pip install` also brings the CUDA 13 stack (Holoscan, CuPy, cuBLAS); the GPU is used when present. |
+| macOS 14+, Apple Silicon | `loop`, `cyberether` | CPU only: no CUDA on macOS. |
+| Windows x64 | `loop`, `cyberether` | CPU only: CyberEther has no CUDA build for Windows. |
+
+`--runner auto` (the default) picks Holoscan on a Linux CUDA machine and the NumPy loop everywhere else.
 
 ## Usage
 

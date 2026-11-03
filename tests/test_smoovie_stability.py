@@ -1,6 +1,7 @@
 """A fixed celestial source lands in the same HEALPix pixel across all frames (sidereally-fixed grid)."""
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from kremetart.imaging.healpix import image_frame, make_pixel_grid
@@ -17,7 +18,7 @@ NSIDE = 64
 
 
 def test_steady_source_holds_one_pixel_across_frames(hdf_paths):
-    import healpy as hp
+    hp = pytest.importorskip("healpy")  # vec2pix as an independent pixel lookup; no Windows wheels
 
     paths = hdf_paths
     pix = make_pixel_grid(NSIDE, xp=np)

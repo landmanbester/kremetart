@@ -126,6 +126,7 @@ def ref_hdf(data_dir: Path) -> Path:
 @pytest.fixture(scope="session")
 def ref_ms(data_dir: Path) -> Path:
     """The calibrated tart2ms Measurement Set for the reference snapshot; skips if absent."""
+    pytest.importorskip("xarray_ms")  # reads Measurement Sets; casacore has no Windows wheels
     ms = data_dir / f"{_REF_STEM}.ms"
     if not ms.exists():
         pytest.skip(f"reference MS not present: {ms}")
@@ -135,6 +136,7 @@ def ref_ms(data_dir: Path) -> Path:
 @pytest.fixture(scope="session")
 def ref_ms_nocal(data_dir: Path) -> Path:
     """The uncalibrated (raw-amplitude) tart2ms Measurement Set for the reference snapshot."""
+    pytest.importorskip("xarray_ms")  # reads Measurement Sets; casacore has no Windows wheels
     ms = data_dir / f"{_REF_STEM}_nocal.ms"
     if not ms.exists():
         pytest.skip(f"reference nocal MS not present: {ms}")

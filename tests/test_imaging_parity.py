@@ -8,7 +8,12 @@ FISTA is slow; set it to 540 for a full run); state carries across snapshots, so
 comparison.
 
 Tolerances (relative L2 per snapshot): references are stored as float32 (relative rounding ~6e-8) and
-were computed with CuPy, so the CuPy run must reproduce every map to 1e-6. On NumPy the dirty map is a
+were computed with CuPy using healpy's pixel vectors. The sky grid now takes them from astropy-healpix,
+which agrees with healpy to ~1e-15; the dirty and L1 maps still reproduce to 1e-6 on CuPy (measured
+2.7e-8 and 3.8e-8 over 60 snapshots), but the Tikhonov solver stops at a slightly different point
+(measured 6.6e-5; smooth map 6.2e-5; normalised innovation 1.4e-3). With healpy's vectors the CuPy chain
+reproduces every map to 2.6e-8, so the difference is solver stopping, not geometry, and those three
+products take the NumPy tolerances, which bound the same effect. On NumPy the dirty map is a
 direct computation and must agree to 1e-5, but the solvers stop at ``tol=1e-5``, and a different
 reduction order changes where they stop: the Tikhonov map already differs by ~3e-4 on the first
 snapshot, where both runs start cold, and stays bounded thereafter (measured over 40 snapshots: median
@@ -52,7 +57,7 @@ PRODUCTS = {
 
 
 NUMPY_RTOL = {"dirty": 1e-5, "tikhonov": 1e-3, "l1": 1e-3, "filtered": 1e-3, "znorm": 3e-2}
-CUPY_RTOL = dict.fromkeys(PRODUCTS, 1e-6)
+CUPY_RTOL = {"dirty": 1e-6, "tikhonov": 1e-3, "l1": 1e-6, "filtered": 1e-3, "znorm": 3e-2}
 
 
 def _backends() -> list:

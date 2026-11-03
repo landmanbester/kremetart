@@ -3,7 +3,8 @@
 kremetart images TART snapshots into a stream of HEALPix sky maps and flags transients with a per-pixel
 Kalman filter. The per-snapshot maths lives in runtime-agnostic **stages** (`src/kremetart/imaging/`);
 a **runner** drives them: Holoscan on a GPU, an in-process NumPy loop on the CPU, or a CyberEther
-flowgraph (`--runner cyberether`, opt-in while the port in #47 matures).
+flowgraph (`--runner cyberether`, opt-in while the port in #47 matures). Linux, macOS (Apple Silicon) and
+Windows are supported; Holoscan and CUDA are Linux-only.
 
 Domain vocabulary is in `GLOSSARY.md`; settled decisions are in `docs/adr/`.
 

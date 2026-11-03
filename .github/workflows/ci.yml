@@ -61,14 +61,31 @@ jobs:
         run: uv run ruff check .
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    # Linux gets every supported Python; macOS (Apple Silicon) and Windows run one, to bound CI time.
+    # No runner has a GPU, so the Holoscan/CuPy tests skip everywhere; the loop and CyberEther (CPU)
+    # runners are tested on every platform.
+    name: Tests (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     env:
       SKIP_CHECKS: 'false'
+      CYBERETHER_VERSION: v1.19.0
+      # uv otherwise follows .python-version (3.11) and ignores the matrix Python.
+      UV_PYTHON: ${{ matrix.python-version }}
+      MESA_WIN_VERSION: 26.2.4
+      # The CyberEther tests image a few tiny snapshots: a stalled run should fail fast, with its log.
+      KREMETART_CYBERETHER_STALL_SECONDS: 120
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - { os: ubuntu-latest, python-version: "3.11", cyberether: cyberether-linux-x86_64 }
+          - { os: ubuntu-latest, python-version: "3.12", cyberether: cyberether-linux-x86_64 }
+          - { os: ubuntu-latest, python-version: "3.13", cyberether: cyberether-linux-x86_64 }
+          - { os: macos-14, python-version: "3.12", cyberether: cyberether-macos-arm64 }
+          - { os: windows-latest, python-version: "3.12", cyberether: cyberether-windows-x86_64 }
 
     steps:
       - name: Check for skip checks
@@ -110,6 +127,66 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: uv sync --group test
 
+      # The CyberEther runner tests need the CyberEther executable. The portable builds are the
+      # executable plus one library; headless CyberEther still opens a Vulkan (or, on macOS, Metal)
+      # device, which GPU-less Linux and Windows runners get from Mesa's software driver (lavapipe).
+      - name: Install Vulkan (software)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libgudev-1.0-0
+
+      # Windows runners have the Vulkan loader but no driver; Mesa's lavapipe from mesa-dist-win fills in.
+      - name: Cache Vulkan (software, Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        id: lavapipe-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/lavapipe
+          key: lavapipe-${{ env.MESA_WIN_VERSION }}
+
+      - name: Download Vulkan (software, Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows' && steps.lavapipe-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/lavapipe" && cd "$RUNNER_TEMP/lavapipe"
+          curl -fsSL -o mesa.7z \
+            "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_WIN_VERSION/mesa3d-$MESA_WIN_VERSION-release-msvc.7z"
+          7z e -y mesa.7z x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json && rm mesa.7z
+
+      # The runner is elevated, and the Vulkan loader ignores VK_DRIVER_FILES in elevated processes, so
+      # the driver is registered the way installed drivers are.
+      - name: Register the software Vulkan driver (Windows)
+        if: env.SKIP_CHECKS != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $icd = Join-Path $env:RUNNER_TEMP "lavapipe\lvp_icd.x86_64.json"
+          $key = "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name $icd -Value 0 -PropertyType DWord -Force | Out-Null
+          Get-ItemProperty -Path $key
+
+      - name: Cache CyberEther
+        if: env.SKIP_CHECKS != 'true'
+        id: cyberether-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cyberether
+          key: ${{ matrix.cyberether }}-${{ env.CYBERETHER_VERSION }}
+
+      - name: Download CyberEther
+        if: env.SKIP_CHECKS != 'true' && steps.cyberether-cache.outputs.cache-hit != 'true'
+        run: |
+          # Relative paths: Git Bash's tar reads the "D:" of a Windows path as a remote host.
+          mkdir -p "$RUNNER_TEMP/cyberether" && cd "$RUNNER_TEMP/cyberether"
+          curl -fsSL -o cyberether.tar.gz \
+            "https://github.com/luigifcruz/CyberEther/releases/download/$CYBERETHER_VERSION/${{ matrix.cyberether }}.tar.gz"
+          tar xzf cyberether.tar.gz && rm cyberether.tar.gz
+
+      - name: Point the tests at CyberEther
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          exe="$RUNNER_TEMP/cyberether/cyberether"
+          [ "$RUNNER_OS" = "Windows" ] && exe="$exe.exe"
+          echo "KREMETART_CYBERETHER=$exe" >> "$GITHUB_ENV"
+
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
-        run: uv run pytest -v
+        run: uv run pytest -v -rs

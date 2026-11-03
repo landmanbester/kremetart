@@ -83,7 +83,7 @@ def compute(ctx):
             return SKIP
     except Exception:
         _failed = True
-        with open({error!r} + ".partial", "w") as f:
+        with open({error!r} + ".partial", "w", encoding="utf-8") as f:
             f.write(traceback.format_exc())
         os.replace({error!r} + ".partial", {error!r})  # atomic: the runner never reads half a traceback
         return SKIP
@@ -153,7 +153,9 @@ def run_cyberether(
         (run_dir / "errors").mkdir()
         graph = flowgraph(prepared, output, settings, run_dir, device=device, dataset=ds, note=window)
         flowgraph_path = run_dir / "flowgraph.yml"
-        flowgraph_path.write_text("---\n" + yaml.dump(graph, Dumper=_NoAliasDumper, sort_keys=False, width=1000))
+        flowgraph_path.write_text(
+            "---\n" + yaml.dump(graph, Dumper=_NoAliasDumper, sort_keys=False, width=1000), encoding="utf-8"
+        )
         log_path = run_dir / "cyberether.log"
         command = [
             find_cyberether(),
@@ -365,13 +367,16 @@ def _follow(
     published = 0
     last_written, last_change = 0, time.monotonic()
     while True:
-        graph_errors = [line for line in log_path.read_text().splitlines() if "[ERROR]" in line]
+        graph_errors = [line for line in _read_log(log_path).splitlines() if "[ERROR]" in line]
         if graph_errors:
-            raise RuntimeError("CyberEther rejected the flowgraph:\n" + "\n".join(graph_errors))
+            raise RuntimeError(
+                "CyberEther reported errors:\n" + "\n".join(graph_errors) + "\n\nEnd of its log:\n" + _tail(log_path)
+            )
         failures = sorted((run_dir / "errors").glob("*.txt"))
         if failures:
-            raise RuntimeError(f"CyberEther block {failures[0].stem!r} failed:\n{failures[0].read_text()}")
-        written = int(progress.read_text()) if progress.exists() else 0
+            failure = failures[0].read_text(encoding="utf-8")
+            raise RuntimeError(f"CyberEther block {failures[0].stem!r} failed:\n{failure}")
+        written = int(progress.read_text(encoding="utf-8")) if progress.exists() else 0
         if store is not None:
             for k in range(published, written):
                 publish_maps(holder, k, float(times[k]), {STREAM_NAME[name]: store[name][k] for name in names})
@@ -394,7 +399,12 @@ def _follow(
 
 
 def _tail(log_path: Path, lines: int = 30) -> str:
-    return "\n".join(log_path.read_text().splitlines()[-lines:])
+    return "\n".join(_read_log(log_path).splitlines()[-lines:])
+
+
+def _read_log(log_path: Path) -> str:
+    """CyberEther's log as text; it is ours to decode, so stray bytes never break error reporting."""
+    return log_path.read_text(encoding="utf-8", errors="replace")
 
 
 def _environment(device: str) -> dict[str, str]:

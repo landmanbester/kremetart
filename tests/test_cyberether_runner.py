@@ -13,6 +13,7 @@ import ast
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -114,6 +115,7 @@ def test_find_cyberether_names_the_appimages_next_to_a_wrong_path(
         find_cyberether()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no executable bit")
 def test_find_cyberether_asks_for_chmod_on_a_non_executable_appimage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -169,11 +171,12 @@ def test_a_failing_block_raises_its_traceback(prepared: Path, tmp_path: Path, mo
     def broken(*args: Any, **kwargs: Any) -> dict[str, Any]:
         graph = flowgraph(*args, **kwargs)
         source = graph["graph"][0]
-        source["config"]["code"] = source["config"]["code"].replace(str(prepared), str(tmp_path / "missing.zarr"))
+        # The adapter class name, unlike a path, appears verbatim in the stub on every platform.
+        source["config"]["code"] = source["config"]["code"].replace("SnapshotSource", "MissingSource")
         return graph
 
     monkeypatch.setattr(cyberether_runner, "flowgraph", broken)
-    with pytest.raises(RuntimeError, match="block 'source' failed"):
+    with pytest.raises(RuntimeError, match="block 'source' failed:(.|\n)*MissingSource"):
         run_cyberether(prepared, tmp_path / "out.zarr", ImagingSettings(nside=2), device="cpu")
 
 
@@ -187,5 +190,5 @@ def test_a_rejected_flowgraph_raises_instead_of_hanging(
         return graph
 
     monkeypatch.setattr(cyberether_runner, "flowgraph", broken)
-    with pytest.raises(RuntimeError, match="rejected the flowgraph"):
+    with pytest.raises(RuntimeError, match="CyberEther reported errors"):
         run_cyberether(prepared, tmp_path / "out.zarr", ImagingSettings(nside=2), device="cpu")
