@@ -104,23 +104,29 @@ CyberEther window instead of headless, so you can watch the blocks execute:
 kremetart --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
 ```
 
-The window shows a note explaining the graph and one Python block per stage, left to right: `source`
-(the prepared snapshots), `imager` (dirty map), `tikhonov` and `l1` (only when `--l2`/`--l1` are given),
-`iwp` (the Kalman filter) and `sink` (the map store); pin tooltips show each tensor's attributes. Each
-block's code is a short stub that builds the stage adapter from `kremetart.blocks`; the maths itself is in
+The window shows a note explaining the graph and one Python block per stage, left to right:
+
+| Block | Does |
+|---|---|
+| `source` | Streams the prepared snapshots. |
+| `imager` | Makes the dirty map. |
+| `tikhonov`, `l1` | Deconvolve it (only when `--l2`/`--l1` are given). |
+| `iwp` | The Kalman filter. |
+| `sink` | Writes the map store. |
+
+Pin tooltips show each tensor's attributes. Each block's code is a short stub that builds the stage adapter from `kremetart.blocks`; the maths itself is in
 `kremetart.imaging`. Editing the stub in the window reloads that block. When every snapshot is imaged,
 kremetart prints `close the CyberEther window to finish`; close the window to let `kremetart` write its
 profile and, when serving, freeze the web viewer.
 
 Troubleshooting:
 
-- **`CyberEther not found`**: set `KREMETART_CYBERETHER` to the AppImage.
-- **A block's traceback**: kremetart stops CyberEther and raises the error from the failing block.
-- **`CyberEther wrote no snapshot for 300 s`**: CyberEther hung, or a snapshot really takes that long (L1 at
-  high nside on the CPU); raise `KREMETART_CYBERETHER_STALL_SECONDS` for the latter.
-- **CUDA errors such as `cuda_fp6.hpp: expected a ";"`**: the AppImage's bundled CUDA 12 compiler is in use.
-  kremetart preloads CUDA 13's NVRTC from your CuPy wheels or CUDA toolkit; if it finds neither, install
-  CUDA 13 or set `CUDA_PATH`.
+| Symptom | Cause and fix |
+|---|---|
+| `CyberEther not found` | Set `KREMETART_CYBERETHER` to the AppImage. |
+| A block's traceback | kremetart stops CyberEther and raises the error from the failing block. |
+| `CyberEther wrote no snapshot for 300 s` | CyberEther hung, or a snapshot really takes that long (L1 at high nside on the CPU); raise `KREMETART_CYBERETHER_STALL_SECONDS` for the latter. |
+| CUDA errors such as `cuda_fp6.hpp: expected a ";"` | The AppImage's bundled CUDA 12 compiler is in use. kremetart preloads CUDA 13's NVRTC from your CuPy wheels or CUDA toolkit; if it finds neither, install CUDA 13 or set `CUDA_PATH`. |
 
 ## Running in a container
 
@@ -140,11 +146,12 @@ docker run --rm --gpus all --ulimit stack=33554432 \
   kremetart --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
 ```
 
-- **`--gpus all`**: expose the host GPU. Without it the run prints `imaging on CPU (NumPy loop)`.
-- **`--ulimit stack=33554432`**: a 32 MiB thread stack. Holoscan warns at import and can segfault below it.
-- **`--user … -e HOME=/tmp`**: write outputs as you rather than `root`, and give CuPy a writable cache
-  directory.
-- **`-v …`**: mount the HDF files read-only and a directory to receive the `.zarr`.
+| Flag | Why |
+|---|---|
+| `--gpus all` | Expose the host GPU. Without it the run prints `imaging on CPU (NumPy loop)`. |
+| `--ulimit stack=33554432` | A 32 MiB thread stack. Holoscan warns at import and can segfault below it. |
+| `--user … -e HOME=/tmp` | Write outputs as you rather than `root`, and give CuPy a writable cache directory. |
+| `-v …` | Mount the HDF files read-only and a directory to receive the `.zarr`. |
 
 To watch the live viewer, drop `--no-serve` and run on the host's network (`--network host` instead of
 `-p 8080:8080`, because the viewer listens on localhost only), then browse to `http://localhost:8080/`.
