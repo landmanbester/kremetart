@@ -10,6 +10,7 @@ import sys
 import types
 from pathlib import Path
 
+import click
 import pytest
 from typer.testing import CliRunner
 
@@ -38,7 +39,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict:
 def test_bare_command_prints_help(captured: dict) -> None:
     """``kremetart`` is a single command: with no arguments it shows its options and runs nothing."""
     result = runner.invoke(app, [])
-    assert "--hdf-dir" in result.output
+    assert "--hdf-dir" in click.unstyle(result.output)  # CI forces colour, which splits the flag
     assert captured == {}
 
 
