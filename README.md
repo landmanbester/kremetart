@@ -9,6 +9,9 @@ which gives the same maps but is much slower. Deconvolution is opt-in for that r
 (Tikhonov) and/or `--l1 0.01` (reweighted L1) to enable it; by default the Kalman filter runs on the
 dirty maps.
 
+**Documentation:** <https://kremetart.readthedocs.io>, covering the command's options, the output format,
+the Python API and a glossary.
+
 ## Installation
 
 ```bash

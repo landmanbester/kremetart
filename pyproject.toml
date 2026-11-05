@@ -43,6 +43,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/landmanbester/kremetart"
+Documentation = "https://kremetart.readthedocs.io"
 Repository = "https://github.com/landmanbester/kremetart"
 "Bug Tracker" = "https://github.com/landmanbester/kremetart/issues"
 
