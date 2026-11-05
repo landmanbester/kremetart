@@ -99,3 +99,5 @@ inside the code (`core.runner.cuda_available`); tests force a path by monkeypatc
   A new system package or base image must exist for both architectures.
 - Release with `uv run tbump <version>`: it regenerates `CHANGELOG.md`, refreshes `uv.lock`, then tags
   and pushes. The tag triggers the PyPI and container publishes.
+- Each GitHub release is named after an iconic African tree (kremetart is Afrikaans for baobab), with a
+  short highlights list and upgrade notes: 0.1.0 "Baobab". Pick a tree not yet used.
