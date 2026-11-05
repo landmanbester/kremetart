@@ -26,7 +26,12 @@ UNITS: dict[str, str] = {
     "smooth": "Jy/pixel",
     "znorm": "",
 }
-"""Unit label of each live stream (``znorm`` is dimensionless); the viewer shows it on the colour bar."""
+"""Unit label of each live stream, shown on the viewer's colour bar (``znorm`` is dimensionless).
+
+``smooth`` carries the unit of the map it smooths: Jy/pixel here, for the Tikhonov maps. When Tikhonov is off
+the filter smooths the dirty maps and :attr:`kremetart.core.settings.ImagingSettings.stream_units` labels it
+Jy/beam instead.
+"""
 
 
 @dataclass(frozen=True)
