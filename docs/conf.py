@@ -6,31 +6,16 @@ maintain (``GLOSSARY.md``, ``docs/adr/``, ``docs/design/``). Pages under ``docs/
 """
 
 import os
-import subprocess
 import sys
 from importlib.metadata import version as package_version
 from pathlib import Path
 
 DOCS = Path(__file__).parent
 
-# The command reference is Typer's own Markdown rendering of the CLI help strings.
-subprocess.run(
-    [
-        sys.executable,
-        "-m",
-        "typer",
-        "kremetart.cli",
-        "utils",
-        "docs",
-        "--name",
-        "kremetart",
-        "--title",
-        "The kremetart command",
-        "--output",
-        str(DOCS / "reference" / "command.md"),
-    ],
-    check=True,
-)
+sys.path.insert(0, str(DOCS))
+import command_page  # noqa: E402  (lives next to this file)
+
+command_page.write(DOCS / "reference" / "command.md")
 
 project = "kremetart"
 author = "Landman Bester"

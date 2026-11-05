@@ -97,9 +97,9 @@ def kremetart(
 
     Holoscan needs a 32 MiB stack on GPU runs: run `ulimit -s 32768` first.
 
-    KREMETART_CYBERETHER: the CyberEther executable for the cyberether runners (default: `cyberether` on PATH).
+    KREMETART_CYBERETHER: The CyberEther executable for the cyberether runners (default: `cyberether` on PATH).
 
-    KREMETART_CYBERETHER_STALL_SECONDS: end a headless CyberEther run that writes no snapshot for this long (300).
+    KREMETART_CYBERETHER_STALL_SECONDS: Ends a headless CyberEther run that writes no snapshot for this long (300).
     """
     # Deferred so that `kremetart --help` stays fast: the command pulls in xarray, astropy and the stages.
     from kremetart.core.kremetart import kremetart as run_kremetart
