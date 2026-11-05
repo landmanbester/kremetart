@@ -56,11 +56,15 @@ def test_prepare_msv4_zarr_boresight_matches_zenith(tmp_path, hdf_paths):
 def test_prepare_msv4_zarr_brot_matches_equatorial_baselines(tmp_path, hdf_paths):
     from kremetart.utils.geometry import equatorial_baselines
     from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
-    from kremetart.utils.rephasing import itrs_baselines
 
     node = partition_datatree(xr.open_datatree(hdf_paths[0], engine="tart"))
     times = np.asarray(node.ds.time.values)
-    bl = np.asarray(itrs_baselines(node, np))
+    antenna = node["antenna_xds"].to_dataset(inherit=False)
+    index = {name: i for i, name in enumerate(antenna.antenna_name.values)}
+    a1 = [index[n] for n in node.ds.baseline_antenna1_name.values]
+    a2 = [index[n] for n in node.ds.baseline_antenna2_name.values]
+    pos = antenna.ANTENNA_POSITION.values
+    bl = pos[a1] - pos[a2]  # ITRS baselines, built independently of prepare
     expected = equatorial_baselines(bl, times, xp=np)
 
     out = tmp_path / "prepared.zarr"

@@ -1,6 +1,6 @@
 """Unit-flux sky model in the local ENU frame.
 
-The acquisition StEFCal step (docs/superpowers/specs/2026-06-24-stefcal-calibration-core-design.md)
+The acquisition StEFCal step (docs/design/stefcal-calibration.md)
 models every catalogued source at flux 1 and needs the geometric coherency of each source on each
 baseline. Both functions are ``xp``-injectable (``xp=numpy`` on CPU, ``xp=cupy`` on GPU) and operate
 purely in the ENU frame -- the equatorial rotation is an imaging concern, strictly downstream of

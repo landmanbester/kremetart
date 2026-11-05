@@ -15,7 +15,7 @@ dirty maps.
 pip install kremetart
 ```
 
-kremetart runs on Linux, macOS (Apple Silicon) and Windows. What it can run on depends on the platform:
+kremetart needs Python 3.11 or later and runs on Linux, macOS (Apple Silicon) and Windows. What it can run on depends on the platform:
 
 | Platform | Runners | Notes |
 |---|---|---|
@@ -29,13 +29,12 @@ kremetart runs on Linux, macOS (Apple Silicon) and Windows. What it can run on d
 
 ```bash
 kremetart --help
-kremetart smoovie --help
 ```
 
 If you have a directory containing pre-downloaded `.hdf` files you should be able to run
 
 ```bash
-kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
+kremetart --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
 ```
 
 Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
@@ -52,10 +51,10 @@ ulimit -s 32768
 
 This lasts for the current shell session, so add it to your shell profile to make it permanent. Apptainer/Singularity containers launched from that shell inherit the limit.
 
-## Producing a movie from the test data
+## Trying it on the test data
 
-The bundled TART snapshots under `tests/data/` are gitignored and fetched on demand from Google
-Drive the first time you run the test suite. You can download them by cloning the repository and installing the test dependencies:
+The bundled TART data under `tests/data/` is gitignored and fetched on demand from Google Drive the first
+time you run the test suite. Clone the repository and install the test dependencies:
 
 ```bash
 git clone https://github.com/landmanbester/kremetart.git
@@ -63,20 +62,20 @@ cd kremetart
 uv sync --group test
 ```
 
-Download the test data with (set `KREMETART_OFFLINE=1` to skip the download):
+Then download the data by running a test (set `KREMETART_OFFLINE=1` to skip the download):
 
 ```bash
-uv run pytest tests/test_smoovie.py -q
+uv run pytest tests/test_kremetart.py -q
 ```
 
-Then render the snapshots into a HEALPix all-sky movie with `smoovie` which images **one frame per sub-integration**. The bundled data consists of nine ~1-minute snapshots of ~1-second sub-integrations, i.e. **540 frames** — so
-render the whole sequence at a watchable frame rate:
+The bundle holds nine ~1-minute HDF files of ~1-second snapshots, i.e. 540 snapshots. `kremetart` images
+each one and streams the maps to the live viewer:
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --output /tmp/test.zarr --nside 64 --correct-gains --overlay-catalog --catalog-cache tests/data/catalog.zarr --open-browser
+uv run kremetart --hdf-dir tests/data --output /tmp/test.zarr --nside 64 --correct-gains --overlay-catalog --catalog-cache tests/data/catalog.zarr --open-browser
 ```
 
-Browser should open automatically, browse to `http://localhost:8080/` if not.
+The browser should open on its own; if not, browse to `http://localhost:8080/`.
 
 ## Running through CyberEther
 
@@ -91,7 +90,7 @@ saved it:
 ```bash
 chmod +x ~/Downloads/CyberEther-linux-x64-cuda.AppImage
 export KREMETART_CYBERETHER=~/Downloads/CyberEther-linux-x64-cuda.AppImage
-kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
+kremetart --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
 ```
 
 kremetart writes the flowgraph, starts CyberEther on its own Python (so the blocks import kremetart from
@@ -102,7 +101,7 @@ live web viewer works as with any other runner.
 CyberEther window instead of headless, so you can watch the blocks execute:
 
 ```bash
-kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
+kremetart --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
 ```
 
 The window shows a note explaining the graph and one Python block per stage, left to right: `source`
@@ -110,7 +109,7 @@ The window shows a note explaining the graph and one Python block per stage, lef
 `iwp` (the Kalman filter) and `sink` (the map store); pin tooltips show each tensor's attributes. Each
 block's code is a short stub that builds the stage adapter from `kremetart.blocks`; the maths itself is in
 `kremetart.imaging`. Editing the stub in the window reloads that block. When every snapshot is imaged,
-kremetart prints `close the CyberEther window to finish`; close the window to let `smoovie` write its
+kremetart prints `close the CyberEther window to finish`; close the window to let `kremetart` write its
 profile and, when serving, freeze the web viewer.
 
 Troubleshooting:
@@ -123,34 +122,37 @@ Troubleshooting:
   kremetart preloads CUDA 13's NVRTC from your CuPy wheels or CUDA toolkit; if it finds neither, install
   CUDA 13 or set `CUDA_PATH`.
 
-## Running in a container (Not yet ready!)
+## Running in a container
 
-If you'd rather not install the native stack, run any command straight from the published
-image. Launch it with GPU access to image on the GPU; without it the container falls back to the
-(slower) CPU loop. GPU access requires the host to have an NVIDIA GPU, recent drivers, and the
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-installed:
+The published image (`ghcr.io/landmanbester/kremetart`, for x86-64 and arm64 such as the DGX Spark;
+`docker pull` picks the right one) carries the whole Linux stack, CUDA included. Started with GPU access it images on the GPU (Holoscan); without it, it falls back to the CPU
+loop. GPU access needs an NVIDIA GPU, recent drivers and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+A batch run, writing the map store to `./out`:
 
 ```bash
 mkdir -p out
 docker run --rm --gpus all --ulimit stack=33554432 \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$PWD/tests/data:/data:ro" -v "$PWD/out:/out" \
-  ghcr.io/landmanbester/kremetart:0.0.1 \
-  kremetart smoovie --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
+  ghcr.io/landmanbester/kremetart:latest \
+  kremetart --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
 ```
 
-The non-obvious flags:
+- **`--gpus all`**: expose the host GPU. Without it the run prints `imaging on CPU (NumPy loop)`.
+- **`--ulimit stack=33554432`**: a 32 MiB thread stack. Holoscan warns at import and can segfault below it.
+- **`--user … -e HOME=/tmp`**: write outputs as you rather than `root`, and give CuPy a writable cache
+  directory.
+- **`-v …`**: mount the HDF files read-only and a directory to receive the `.zarr`.
 
-- **`--gpus all`** — expose the host GPU(s) to the container; needs the NVIDIA Container Toolkit.
-  Without it the run prints `imaging on CPU (NumPy loop)` and images on the CPU.
-- **`--ulimit stack=33554432`** — give threads a 32 MiB stack. Holoscan warns at import and can
-  segfault below this.
-- **`--user … -e HOME=/tmp`** — write outputs as you rather than `root`, and give CuPy/matplotlib a
-  writable directory for their on-disk caches.
-- **`-v …`** — mount the input HDF snapshots read-only and a directory to receive the `.zarr`.
+To watch the live viewer, drop `--no-serve` and run on the host's network (`--network host` instead of
+`-p 8080:8080`, because the viewer listens on localhost only), then browse to `http://localhost:8080/`.
+Host networking also gives `--overlay-catalog` the access it needs to the TART catalogue API.
 
-Swap `:0.0.1` for `:latest` to track `main`. Under Apptainer/Singularity the GPU flag is `--nv`
-instead (`apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:0.0.1 kremetart …`). Add
-`--overlay-catalog` to overlay the TART satellite catalogue on each frame — it needs outbound
-network access to the TART catalogue API, which the default Docker bridge network provides.
+`:latest` tracks `main`; releases are tagged by version (e.g. `:0.1.0`). Under Apptainer/Singularity the
+GPU flag is `--nv` and the host network is the default:
+
+```bash
+apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:latest kremetart --hdf-dir … --output …
+```

@@ -2,7 +2,7 @@
 
 The TART catalogue API returns, for a site ``(lon, lat)`` and a UTC datestr, the list of
 sources above an elevation cutoff, each a dict with ``name``/``az``/``el``/``jy``/``r``.
-:func:`satellite_tracks` queries it once per smoovie frame (one per sub-integration, in the
+:func:`satellite_tracks` queries it once per snapshot (one per sub-integration, in the
 same order as the prepared imaging zarr; see :func:`kremetart.utils.read_tart_hdf.prepare_msv4_zarr`),
 converts each ``(az, el)`` to
 ICRS ``(ra, dec)`` at that timestamp, and groups the results by satellite name so the renderer
@@ -49,7 +49,7 @@ def _tart_api_fetch(lon, lat, datestr, elevation_deg):
 
 
 def _frame_times_and_site(hdf_paths):
-    """Per-frame unix timestamps and the shared site, in smoovie frame order.
+    """Per-frame unix timestamps and the shared site, in snapshot order.
 
     Returns:
         ``(times_unix, lat_deg, lon_deg, alt_m)`` where ``times_unix`` is a ``(n_frame,)`` array
@@ -166,7 +166,7 @@ def _save_catalog_cache(path, datestrs, times_unix, per_frame, lat, lon, elevati
 
 
 def satellite_tracks(hdf_paths, elevation_deg, *, fetch=_tart_api_fetch, cache_path=None, nframes=None):
-    """Per-satellite ICRS tracks aligned 1:1 with the smoovie frame sequence.
+    """Per-satellite ICRS tracks aligned 1:1 with the snapshot sequence.
 
     Iterates the same ordering as :func:`kremetart.utils.read_tart_hdf.prepare_msv4_zarr`, so the global
     frame index produced here matches the dirty-map index exactly.

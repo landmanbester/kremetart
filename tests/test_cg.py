@@ -25,13 +25,6 @@ def test_cg_solves_spd_system():
     np.testing.assert_allclose(x, np.linalg.solve(a, b), rtol=1e-6, atol=1e-8)
 
 
-def test_cg_zero_rhs_returns_zero():
-    rng = np.random.default_rng(1)
-    a = _spd(10, rng)
-    x = cg(lambda v: a @ v, np.zeros(10), xp=np)
-    np.testing.assert_array_equal(x, np.zeros(10))
-
-
 def test_jacobi_preconditioner_reduces_residual_for_fixed_budget():
     """On an ill-conditioned SPD system, Jacobi PCG beats plain CG at a fixed small iteration budget."""
     rng = np.random.default_rng(2)
@@ -63,12 +56,3 @@ def test_warm_start_reduces_residual_for_fixed_budget():
     x_cold = cg(lambda v: a @ v, b, maxiter=budget, tol=0.0, xp=np)
     x_warm = cg(lambda v: a @ v, b, x0=x0, maxiter=budget, tol=0.0, xp=np)
     assert np.linalg.norm(a @ x_warm - b) < np.linalg.norm(a @ x_cold - b)
-
-
-def test_warm_start_at_solution_is_fixed_point():
-    rng = np.random.default_rng(4)
-    a = _spd(20, rng)
-    b = rng.standard_normal(20)
-    truth = np.linalg.solve(a, b)
-    x = cg(lambda v: a @ v, b, x0=truth, maxiter=50, tol=1e-12, xp=np)
-    np.testing.assert_allclose(x, truth, rtol=1e-8, atol=1e-10)

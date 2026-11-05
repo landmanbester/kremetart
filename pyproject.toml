@@ -3,7 +3,7 @@ name = "kremetart"
 version = "0.0.1"
 description = "Kalman Real-time Evidence Monitoring Extractor for TART"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -11,7 +11,6 @@ authors = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -22,14 +21,11 @@ classifiers = [
 dependencies = [
     "typer>=0.12.0",
     "astropy-healpix>=1.0",
-    # Only the parked Mollweide renderer (utils/visualisation.py) needs healpy, which has no Windows wheels.
-    "healpy>=1.19.0 ; sys_platform != 'win32'",
     "pyyaml>=6.0",
     "numpy>=2.0.0",
     "scipy>=1.15.0",
     "xarray>=2025.0",
     "astropy>=6.0.0",
-    "matplotlib>=3.8.0",
     "zarr>=2.18.3",
     # The GPU stack is Linux-only: Holoscan ships Linux wheels only, and CyberEther only has CUDA builds there.
     "holoscan-cu13>=4.3.0 ; sys_platform == 'linux'",
@@ -41,10 +37,8 @@ dependencies = [
     # toolkit here ships no cuBLAS. NB: the real wheel is unsuffixed "nvidia-cublas"; the
     # "nvidia-cublas-cu13" name is only a 0.0.1 redirect stub.
     "nvidia-cublas>=13.0,<14 ; sys_platform == 'linux'",
-    "tart-tools>=1.4.5 ; python_version >= '3.11'",
-    "netcdf4>=1.7.4 ; python_version >= '3.11'",
-    "tart[all]>=1.4.5  ; python_version >= '3.11'",
-    "tart-msv4>=0.1.2 ; python_version >= '3.11'",
+    "tart-tools>=1.4.5",
+    "tart-msv4>=0.1.2",
 ]
 
 [project.urls]
@@ -61,7 +55,7 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -98,9 +92,10 @@ dev = [
 test = [
     "pytest>=8.0.0",
     # Measurement Set oracles (tart2ms comparisons); casacore has no Windows wheels.
-    "arcae>=0.5.2,<0.6.0 ; python_version >= '3.11' and sys_platform != 'win32'",
-    "xarray-ms>=0.5.5 ; python_version >= '3.11' and sys_platform != 'win32'",
+    "arcae>=0.5.2,<0.6.0 ; sys_platform != 'win32'",
+    "xarray-ms>=0.5.5 ; sys_platform != 'win32'",
     "pytest-cov>=5.0.0",
-    "pyproj>=3.6.0",
+    # The reference HEALPix implementation the astropy-healpix geometry is checked against; no Windows wheels.
+    "healpy>=1.19.0 ; sys_platform != 'win32'",
     "gdown>=5.0.0",
 ]

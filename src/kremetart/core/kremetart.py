@@ -19,10 +19,10 @@ from pathlib import Path
 from kremetart.core.runner import select_runner
 from kremetart.core.settings import ImagingSettings
 from kremetart.utils.beam import GROUND_PLANE_DIAMETER
+from kremetart.utils.geometry import common_phase_direction
 from kremetart.utils.healpix_viz import LatestFrameHolder
 from kremetart.utils.profiling import print_profile, stage_timer
 from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
-from kremetart.utils.rephasing import common_phase_direction
 from kremetart.utils.satellites import satellite_tracks
 from kremetart.utils.web_server import FrameServer
 
@@ -35,7 +35,7 @@ def _wait_for_interrupt() -> None:
         pass
 
 
-def smoovie(
+def kremetart(
     hdf_dir: Path,
     output: Path,
     nside: int = 128,

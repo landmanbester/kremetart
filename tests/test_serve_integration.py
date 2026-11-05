@@ -1,13 +1,8 @@
-"""Integration tests for the live web-viewer serving path.
+"""Integration tests for the live web viewer's HTTP/WebSocket serving.
 
-Closes two risks the unit tests leave open, with real execution:
-
-1. The Holoscan fan-out: in serve mode the Holoscan runner's graph wires iwp -> writer AND iwp -> web sink off
-   the same iwp output ports. ``test_fanout_populates_holder`` runs the real imaging app with a
-   holder and asserts the sink populated it and the durable zarr was still written.
-2. The HTTP/WebSocket serving: FrameServer serves the renderer, the vendored three.js, and the
-   /stream protocol on a real uvicorn thread. The serving tests start the server and drive it with
-   a stdlib HTTP client and a websockets client.
+FrameServer serves the renderer, the vendored three.js, and the /stream protocol on a real uvicorn
+thread; these start the server and drive it with a stdlib HTTP client and a websockets client. (That
+every runner fills the holder is checked in ``test_runners.py``.)
 """
 
 import asyncio
@@ -16,15 +11,11 @@ import socket
 import time
 import urllib.request
 from contextlib import closing
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from kremetart.core.runner import cuda_available
-from kremetart.core.settings import ImagingSettings
 from kremetart.utils.healpix_viz import NAMES, UNITS, LatestFrameHolder, encode_frame
-from kremetart.utils.read_tart_hdf import prepare_msv4_zarr
 from kremetart.utils.web_server import FrameServer
 
 
@@ -109,29 +100,3 @@ def test_stream_protocol_geometry_frames_end(served):
     assert types[-1] == "end"  # clean terminator
     assert types.index("geometry") < types.index("frame") < types.index("end")
     assert {g["name"]: g["unit"] for g in geo} == UNITS  # each geometry carries its unit label
-
-
-# --- fan-out: the Holoscan graph populates the holder AND writes the zarr -------------------------
-
-
-@pytest.mark.skipif(not cuda_available(), reason="requires a CUDA device + holoscan")
-@pytest.mark.parametrize("l2, l1", [(None, None), (0.01, 0.01)], ids=["default", "l2-l1"])
-def test_fanout_populates_holder(hdf_paths: list[Path], tmp_path: Path, l2: float | None, l1: float | None) -> None:
-    """Serve-mode graph (iwp -> writer AND iwp -> web sink) runs; sink fills holder, writer writes."""
-    # GPU-only dependency: holoscan_runner imports holoscan and cupy at module top.
-    from kremetart.core.holoscan_runner import run_holoscan
-
-    settings = ImagingSettings(nside=16, l2=l2, l1=l1)
-    holder = LatestFrameHolder(settings.stream_names)
-    prepared = prepare_msv4_zarr(hdf_paths, tmp_path / "prepared.zarr", nframes=3)
-    out = tmp_path / "fanout.zarr"
-
-    run_holoscan(prepared, out, settings, holder)
-
-    snap = holder.snapshot()
-    assert set(snap) == set(settings.stream_names)
-    for name in settings.stream_names:
-        assert snap[name] is not None, f"sink never populated {name!r} -- fan-out broken"
-        assert len(snap[name].data) == settings.npix * 4  # float32 little-endian, full map
-    assert holder.current_seq == 2  # nframes - 1, shared seq advanced once per integration
-    assert out.exists()  # writer still wrote the durable zarr -> both broadcast branches ran

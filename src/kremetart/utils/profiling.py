@@ -15,7 +15,7 @@ def stage_timer(name, timings):
 def print_profile(timings, nframes):
     """Print a per-stage timing summary table to stdout."""
     total = sum(dt for _, dt in timings) or 1.0
-    print("\n=== smoovie profile ===")
+    print("\n=== kremetart profile ===")
     print(f"{'stage':<18}{'seconds':>10}{'%total':>9}{'ms/frame':>11}")
     for name, dt in timings:
         per_frame = f"{1000.0 * dt / nframes:.1f}" if nframes else "-"
