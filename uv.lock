@@ -49,8 +49,8 @@ name = "arcae"
 version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pyarrow" },
+    { name = "numpy", marker = "sys_platform != 'win32'" },
+    { name = "pyarrow", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/52/eb/136946699aff957dc8f8e9601466da8e8f5247f7c2bd5b33d3a3e79458df/arcae-0.5.2.tar.gz", hash = "sha256:534102b422ffdc515270e6c9f6b7f112e15470dbdc9e3907d20d94ad8826bc4f", size = 95451, upload-time = "2026-06-12T12:10:13.229Z" }
 wheels = [
@@ -531,8 +531,8 @@ name = "cupy-cuda13x"
 version = "14.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/35/a0/33ba64feccedf661960057a9967e2e623853f4757ba5be2f04f6503a4ac0/cupy_cuda13x-14.1.1-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:3d12e1020066a699f5e27f4c5597167dca042704c0ed1db74066c32c0c2dbfb1", size = 73970864, upload-time = "2026-06-01T04:53:53.903Z" },
@@ -761,8 +761,8 @@ name = "healpy"
 version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astropy" },
-    { name = "numpy" },
+    { name = "astropy", marker = "sys_platform != 'win32'" },
+    { name = "numpy", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3f/54/dd2fa7e6b12f8d3bcc34d61c72cbc1bbbad9b3142583d40803825abea2f6/healpy-1.20.0.tar.gz", hash = "sha256:03b0e1551ae235c7290e9bfdf69fa9cdc194f8a2be51198c1924b15d826102ed", size = 66326598, upload-time = "2026-07-23T20:15:51.281Z" }
 wheels = [
@@ -801,12 +801,12 @@ name = "holoscan-cu13"
 version = "4.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cloudpickle" },
-    { name = "cupy-cuda13x" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pip" },
-    { name = "wheel-axle-runtime" },
+    { name = "cloudpickle", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cupy-cuda13x", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pillow", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pip", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "wheel-axle-runtime", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/67/2439b20715e4b7ecc94346318517c1bbcb751c819c4c0b5e802286c49534/holoscan_cu13-4.6.0-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:2955820fb88be062e3af35d8786bae8f6b1b9d7f12ad30fd52e56c5f219be47f", size = 37594125, upload-time = "2026-09-01T23:27:25.069Z" },
@@ -883,7 +883,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -961,7 +961,7 @@ wheels = [
 
 [[package]]
 name = "kremetart"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -1218,7 +1218,7 @@ name = "nvidia-cublas"
 version = "13.6.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cuda-nvrtc" },
+    { name = "nvidia-cuda-nvrtc", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/51/a174a0e79793e528ef4645a9d554e3aa48fd8da3f9c9cf523c0176bb121b/nvidia_cublas-13.6.1.10-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e05a431062a17cb9b02e2f37e67817b637051ce8fad57b388482c594396ddbb4", size = 518610411, upload-time = "2026-07-30T18:18:32.969Z" },
@@ -2527,8 +2527,8 @@ name = "wheel-axle-runtime"
 version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "pip" },
+    { name = "filelock", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pip", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/93/09/bb7ac1f995c9e4900d782cce86bc647809e19a4634b156c16868c1f7d92c/wheel_axle_runtime-0.0.11.tar.gz", hash = "sha256:ec6f761526e91e7428f5af86f5f1147deb4a6c27a390ce84c54ba215e4b075a6", size = 17125, upload-time = "2026-02-12T04:33:32.783Z" }
 wheels = [
@@ -2554,10 +2554,10 @@ name = "xarray-ms"
 version = "0.5.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "arcae" },
-    { name = "rarg-python-patterns" },
-    { name = "typing-extensions" },
-    { name = "xarray" },
+    { name = "arcae", marker = "sys_platform != 'win32'" },
+    { name = "rarg-python-patterns", marker = "sys_platform != 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform != 'win32'" },
+    { name = "xarray", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a1/55/40443ad7371e31b1ef70927bc1fdc8c3017198978b4d97d57dc56293626a/xarray_ms-0.5.5.tar.gz", hash = "sha256:3fa4421eea4acdc6b8c34be1f324dadaeeeb0d43507a14791577fe2d35f87e87", size = 72649, upload-time = "2026-06-12T15:58:25.006Z" }
 wheels = [

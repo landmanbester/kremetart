@@ -5,6 +5,148 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-11-05
+
+### Added
+
+- Support macOS and Windows for the loop and CyberEther runners
+- Add a cyberether-gui runner, a stall timeout, and the docs
+- Add a --runner option to pick loop, holoscan or cyberether
+- Add a CyberEther runner
+- Run smoovie on CPU behind a runner seam; make L2 opt-in
+- Add unit-labelled colorbar to the live viewer
+- Always image dirty/Tikhonov/L1; --l2/--l1 strengths
+- Constant 5-channel viewer set with per-channel units
+- Add Tikhonov-vs-L1 deconvolution comparison script
+- Select tikhonov or l1 deconvolution via --regulariser
+- Add L1ReweightOperator (FISTA deconvolution sibling of Tikhonov)
+- Add fista_quadratic image-space reweighted-L1 solver
+- Fista deconv function
+- Export fista and add sky-model recovery test
+- Add reweighted-L1 outer loop to FISTA
+- Add inner FISTA with backtracking line search
+- Add weighted-L1 soft-threshold prox
+- T_int solution interval (time-pooled StefCAL)
+- Optional primary-beam weighting in model visibilities
+- Add catalogue glue + opt-in StefCAL real-data check
+- Add acquisition StefCAL solver with gauge fixing
+- Add unit-flux ENU sky model for calibration
+- Add (beam corrected) Tikhonov regularised stream
+- Airy beam in measurement operator
+- Vendor renderer with live stream, freeze, and satellite overlay
+- Rewrite smoovie CLI for live web viewer (serve/port/output)
+- Stream smoovie maps to web sink; drop png/ffmpeg path
+- Add WebStreamSinkOperator terminal sink
+- Add FrameServer and /stream websocket handler
+- Add geometry and tracks payload builders for web viz
+- Add LatestFrameHolder and frame encoder for web viz
+- Split out visualisation module for future sub-command that will render cude to old Mollwiede projection
+
+### CI
+
+- Publish the container for arm64 (DGX Spark) as well as amd64
+- Test the matrix Python; probe CyberEther Python blocks on Windows
+- Fail stalled CyberEther runs after 120 s
+- Register Windows' software Vulkan driver in the registry
+- Give Windows runners Mesa's software Vulkan for CyberEther
+- Extract CyberEther with relative paths so Windows tar works
+- Bump the github-actions group across 1 directory with 3 updates
+
+### Changed
+
+- Make kremetart a single command, dropping the smoovie subcommand
+- Remove the pre-stage imaging path and the tart2ms study
+- Retire hip-cargo packaging
+- Delete the stream_msv4 lm-plane imaging lineage
+- Move per-snapshot imaging logic into four stage modules
+- Split device-side HEALPix imaging maths from host geometry
+- Make reweighted-L1 (FISTA) deconvolution opt-in
+- Read TART HDF files through tart-msv4
+- Drive fista on shared value/value_grad smooth-term core
+
+### Dependencies
+
+- Drop the Mollweide renderer and unused dependencies
+- Bump the python-minor-patch group across 1 directory with 8 updates
+- Bump the python-minor-patch group across 1 directory with 4 updates
+- Update uv-build requirement
+- Bump the python-minor-patch group across 1 directory with 2 updates
+
+### Documentation
+
+- Update the README, agent rules and design notes for 0.1.0
+- Tell native users to raise the stack size for Holoscan
+- Delete stale calimage and detector documents now in unified
+- Align operator/spec docs with parallel-deconvolver data flow
+- Correct L1ReweightOperator port docstring after parallel rewiring
+- Implementation plan for three-stream comparison viewer
+- Design spec for three-stream comparison viewer
+- Reconcile fista_quadratic default (max_reweight=0) and b==0 short-circuit
+- Implementation plan for reweighted-L1 deconvolution
+- Design spec for reweighted-L1 deconvolution operator
+- Add reweighted-L1 FISTA implementation plan
+- Add reweighted-L1 FISTA solver design spec
+- Implementation plan for StefCAL calibration core
+- Design for StefCAL calibration core (acquisition)
+- Design for Tikhonov-regularised imaging via conjugate gradients
+- Design for Airy beam in the measurement operator
+- Update README
+- Record localhost-default server bind in web visualizer spec
+- Add live web visualizer implementation plan
+- Note parked Mollweide renderer in web visualizer spec
+- Add live web visualizer design spec for smoovie
+
+### Fixed
+
+- Read and write text as UTF-8; show CyberEther's log on errors
+- Check the CyberEther executable before any work starts
+- Find NVRTC in CUDA toolkits as well as CUDA wheels
+- Label smoothed dirty maps in dirty units; comment GPU imports
+- Address review on the imaging stages
+- **fista**: Move w into the sum
+- Compare dirty concentration on the same clipped basis as tikhonov/l1
+- Clamp negative max_reweight in fista to plain L1
+- GPU = True in _container_image.py so that containerised backends can see the GPU
+- Finalise symlinks at build time by by adding RUN python -c 'import holoscan' to Dockerfile
+- Harden IWP evolution when frames are fully flagged
+- Harden stream_handler against name mismatch; correct overlay docstrings
+- Bind web server to localhost by default (no LAN exposure)
+- Flush clean end on imaging error so clients freeze not reconnect
+- Stop web server on imaging error; clarify serve in catalog tests
+- Explicit tracks None-check and type hints on stream_handler
+
+### Miscellaneous
+
+- Configure agent skills (issue tracker, triage labels, domain docs)
+- Pin the pre-commit ruff hook to the locked ruff (0.16.6)
+- Respond to copilot comments
+- Add StefCAL gain calibration/validation scripts
+- Merge in main
+- Update container tag
+
+### Other
+
+- Bump hip-cargo version
+- Update uv.lock for fastapi and uvicorn
+- Get Dockerfile to install system dependencies
+
+### Testing
+
+- Strip colour from the help output before checking it
+- Check the Kalman covariance stays symmetric PSD in the IWP loop
+- Keep one test per behaviour at the interface
+- Break the CyberEther source block in a platform-independent way
+- Run the CyberEther CUDA case wherever CuPy sees a device
+- Make the CLI tests GPU-free and check every forwarded option
+- Module-level imports and type hints in new tests
+- Cover complex-operator gradient path in FISTA
+- Real-data check uses beam + pooled t_int; sync spec with findings
+- Cover web fan-out and HTTP/WS serving end-to-end
+- Relocate Mollweide overlay tests to utils.visualisation
+- Assert geometry corners are native floats and cover second track point
+- Derive thread-safety max and cover empty-frame encoding
+
+
 ## [0.0.1] - 2026-06-18
 
 ### Added
@@ -120,5 +262,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add pyproj truth-geometry helpers for accuracy verification
 
 
+[0.1.0]: https://github.com/landmanbester/kremetart/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/landmanbester/kremetart/releases/tag/v0.0.1
 
