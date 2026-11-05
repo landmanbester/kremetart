@@ -60,6 +60,15 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: uv run ruff check .
 
+      # The docs are generated from docstrings, CLI help strings and the Markdown records; a warning
+      # (a broken cross-reference, malformed docstring) fails the build, as it does on Read the Docs.
+      - name: Build the docs
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          uv sync --no-default-groups --group docs --no-install-package holoscan-cu13 \
+            --no-install-package cupy-cuda13x --no-install-package nvidia-cublas
+          uv run --no-sync sphinx-build -W --keep-going -b html docs docs/_build/html
+
   test:
     # Linux gets every supported Python; macOS (Apple Silicon) and Windows run one, to bound CI time.
     # No runner has a GPU, so the Holoscan/CuPy tests skip everywhere; the loop and CyberEther (CPU)

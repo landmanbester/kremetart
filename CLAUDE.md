@@ -8,7 +8,8 @@ flowgraph (`--runner cyberether`, opt-in while the port in #47 matures). Linux, 
 Windows are supported; Holoscan and CUDA are Linux-only.
 
 Domain vocabulary is in `GLOSSARY.md`; settled decisions are in `docs/adr/`; the derivations the code cites
-are in `docs/design/`.
+are in `docs/design/`. These files, the docstrings and the CLI help strings are the single source for the
+human docs, which Sphinx generates from them (`testing-and-ci.md` §4).
 
 | Rule file | Read it when editing |
 |---|---|

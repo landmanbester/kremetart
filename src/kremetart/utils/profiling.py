@@ -1,3 +1,5 @@
+"""Per-stage wall-clock timing for ``kremetart --profile``."""
+
 import contextlib
 import time
 

@@ -54,6 +54,18 @@ uv run ruff format . && uv run ruff check . --fix
 
 The pre-commit hook and CI enforce the same configuration.
 
+The documentation (Sphinx, hosted on Read the Docs) is generated, never written: the command page from
+the Typer help strings, the Python reference from docstrings, and the glossary, ADRs and design notes from
+their Markdown files. Pages under `docs/` (outside `adr/`, `design/`, `agents/`) only arrange those
+sources. Build it after changing a docstring, help string or one of those files:
+
+```bash
+uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html
+```
+
+CI's Code Quality job runs the same build; a warning fails it. The build also writes `llms.txt` and
+`llms-full.txt`, the whole site as Markdown for agents.
+
 ## 5. Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/): `<type>: <description>` with `feat`,

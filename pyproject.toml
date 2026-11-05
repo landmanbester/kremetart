@@ -89,6 +89,12 @@ dev = [
     "pre-commit>=4.0.0",
     "ipdb",
 ]
+docs = [
+    "furo>=2025.7",
+    "myst-parser>=4.0",
+    "sphinx>=8.1",
+    "sphinx-llms-txt>=0.7",
+]
 test = [
     "pytest>=8.0.0",
     # Measurement Set oracles (tart2ms comparisons); casacore has no Windows wheels.

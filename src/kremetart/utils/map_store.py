@@ -1,5 +1,15 @@
 """The durable map store: a ``(TIME, PIX)`` zarr with one float32 variable per map name.
 
+This is the file ``kremetart --output`` writes. Open it with ``xarray.open_zarr(path)``:
+
+- ``TIME``: snapshot times in unix seconds (UTC), one row per snapshot.
+- ``PIX``: HEALPix pixel index, NESTED ordering, on an equatorial (ICRS) grid with ``12 * nside**2``
+  pixels.
+- One float32 ``(TIME, PIX)`` variable per map, named as in
+  :data:`kremetart.core.settings.STORED_NAMES`: ``dirty`` (Jy/beam), ``tikhonov`` and ``l1``
+  (Jy/pixel, only when ``--l2``/``--l1`` are given), ``filtered`` (the IWP-smoothed map, in the unit of
+  the map it smooths) and ``znorm`` (the normalised innovation, dimensionless).
+
 Host-only (NumPy, xarray, dask). Every runner writes through these two functions, so the output format
 is defined once: :func:`create_map_store` writes a lazy scaffold sized for the whole run, then
 :func:`write_maps` fills one snapshot's row, located by matching its time against the ``TIME``

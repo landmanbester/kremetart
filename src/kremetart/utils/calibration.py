@@ -1,3 +1,5 @@
+"""Apply a TART file's stored per-antenna gain solution to its visibilities and weights."""
+
 import numpy as np
 
 from kremetart.utils.gains import apply_inverse_gains

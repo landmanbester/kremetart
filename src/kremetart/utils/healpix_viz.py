@@ -26,6 +26,7 @@ UNITS: dict[str, str] = {
     "smooth": "Jy/pixel",
     "znorm": "",
 }
+"""Unit label of each live stream (``znorm`` is dimensionless); the viewer shows it on the colour bar."""
 
 
 @dataclass(frozen=True)

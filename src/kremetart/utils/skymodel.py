@@ -38,7 +38,7 @@ def enu_direction_cosines(az, el, *, xp: ModuleType = np):
 
 
 def model_visibilities(s_enu, bl_enu, freqs, *, beam=None, xp: ModuleType = np):
-    """Model visibilities ``M_pq = sum_s B_s exp(2*pi*i*(nu/c)*b_pq . s_s)``.
+    """Model visibilities ``M_pq = sum_s B_s exp(2*pi*i*(nu/c)*b_pq · s_s)``.
 
     Every source is at unit flux; the optional ``beam`` supplies a per-source (per-channel) real
     weight that stands in for the apparent-flux modulation of the primary beam, down-weighting
