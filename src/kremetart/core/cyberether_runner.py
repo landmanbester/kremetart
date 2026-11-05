@@ -46,7 +46,7 @@ snapshot (start-up included) before it is declared hung."""
 _LAYOUT = {"source": (0, 0), "imager": (1, 0), "tikhonov": (2, 0), "l1": (2, 1), "iwp": (3, 0), "sink": (4, 0)}
 _NODE_WIDTH, _NODE_HEIGHT, _COLUMN, _ROW = 600, 640, 680, 720
 
-_NOTE = """# kremetart smoovie
+_NOTE = """# kremetart
 
 Each Python block wraps one kremetart stage; the code shown is a stub that builds the adapter in
 `kremetart.blocks` on the first compute cycle and calls it once per snapshot.
@@ -56,7 +56,7 @@ Each Python block wraps one kremetart stage; the code shown is a stub that build
 - **iwp** is the per-pixel Kalman filter: the smooth map and the normalised innovation.
 - **sink** writes every map to the map store; kremetart's live viewer reads them from there.
 
-The source stops emitting after the last snapshot; close this window to let `kremetart smoovie` finish.
+The source stops emitting after the last snapshot; close this window to let `kremetart` finish.
 """
 
 _STUB = """\
@@ -291,7 +291,7 @@ def flowgraph(
         }
     if note:
         blocks.insert(0, _note_block())
-    return {"version": 2, "title": "kremetart smoovie", "graph": blocks}
+    return {"version": 2, "title": "kremetart", "graph": blocks}
 
 
 def _note_block() -> dict[str, Any]:

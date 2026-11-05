@@ -7,8 +7,8 @@ Read this when editing `tests/**` or `.github/workflows/**`.
 - Test a module through its interface: stages through `image`/`solve`/`update` on synthetic snapshots
   (`tests/test_imaging_stages.py`), the CLI through Typer's `CliRunner` with `core` stubbed
   (`tests/test_cli.py`), runners through the runner interface (`tests/test_runners.py`), and command
-  orchestration through `smoovie()` on the loop runner with only the web server faked
-  (`tests/test_smoovie.py`). A test that has to reach past an interface is a sign the module is the wrong
+  orchestration through `kremetart()` on the loop runner with only the web server faked
+  (`tests/test_kremetart.py`). A test that has to reach past an interface is a sign the module is the wrong
   shape.
 - New behaviour in a stage gets a NumPy test; GPU agreement is checked once per chain, not per test.
 - One test per behaviour, at the highest interface that shows it. Test a lower-level function directly only

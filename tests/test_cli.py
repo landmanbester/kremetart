@@ -1,4 +1,4 @@
-"""The ``kremetart`` CLI: option parsing and hand-off to :func:`kremetart.core.smoovie.smoovie`.
+"""The ``kremetart`` CLI: option parsing and hand-off to :func:`kremetart.core.kremetart.kremetart`.
 
 The core module is replaced by a stub in ``sys.modules`` and its signature is read from source, so these
 tests run without Holoscan/CuPy or a GPU.
@@ -18,35 +18,37 @@ from kremetart.cli import app
 from kremetart.core.runner import RUNNERS
 
 runner = CliRunner()
-CORE_SMOOVIE = Path(cli.__file__).parent / "core" / "smoovie.py"
+CORE_MODULE = Path(cli.__file__).parent / "core" / "kremetart.py"
 
 
 @pytest.fixture
 def captured(monkeypatch: pytest.MonkeyPatch) -> dict:
     calls: dict = {}
 
-    def fake_smoovie(**kwargs: object) -> Path:
+    def fake_kremetart(**kwargs: object) -> Path:
         calls.update(kwargs)
         return Path(str(kwargs["output"]))
 
-    stub = types.ModuleType("kremetart.core.smoovie")
-    stub.smoovie = fake_smoovie
-    monkeypatch.setitem(sys.modules, "kremetart.core.smoovie", stub)
+    stub = types.ModuleType("kremetart.core.kremetart")
+    stub.kremetart = fake_kremetart
+    monkeypatch.setitem(sys.modules, "kremetart.core.kremetart", stub)
     return calls
 
 
-def test_help_lists_smoovie() -> None:
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0 and "smoovie" in result.output
+def test_bare_command_prints_help(captured: dict) -> None:
+    """``kremetart`` is a single command: with no arguments it shows its options and runs nothing."""
+    result = runner.invoke(app, [])
+    assert "--hdf-dir" in result.output
+    assert captured == {}
 
 
-def test_smoovie_requires_input_and_output(captured: dict) -> None:
-    result = runner.invoke(app, ["smoovie"])
+def test_requires_input_and_output(captured: dict) -> None:
+    result = runner.invoke(app, ["--nside", "8"])
     assert result.exit_code != 0
     assert captured == {}
 
 
-def test_smoovie_forwards_every_option(captured: dict, tmp_path: Path) -> None:
+def test_forwards_every_option(captured: dict, tmp_path: Path) -> None:
     """Every option, set to a distinct non-default value, reaches core unchanged."""
     expected = {
         "hdf_dir": tmp_path / "hdf",
@@ -72,7 +74,7 @@ def test_smoovie_forwards_every_option(captured: dict, tmp_path: Path) -> None:
         "open_browser": True,
         "runner": "cyberether",
     }
-    args = ["smoovie"]
+    args: list[str] = []
     for name, value in expected.items():
         flag = "--" + name.replace("_", "-")
         if isinstance(value, bool):
@@ -85,15 +87,15 @@ def test_smoovie_forwards_every_option(captured: dict, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert captured == expected
     defaults = {
-        name: p.default for name, p in inspect.signature(cli.smoovie).parameters.items() if p.default is not p.empty
+        name: p.default for name, p in inspect.signature(cli.kremetart).parameters.items() if p.default is not p.empty
     }
     assert all(expected[name] != default for name, default in defaults.items()), "use non-default values"
 
 
 def _core_parameters() -> list[str]:
-    """Parameter names of ``core.smoovie.smoovie``, read from source so no GPU stack is imported."""
-    tree = ast.parse(CORE_SMOOVIE.read_text())
-    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "smoovie")
+    """Parameter names of ``core.kremetart.kremetart``, read from source so no GPU stack is imported."""
+    tree = ast.parse(CORE_MODULE.read_text())
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "kremetart")
     return [a.arg for a in func.args.posonlyargs + func.args.args + func.args.kwonlyargs]
 
 
@@ -102,12 +104,10 @@ def test_cli_runner_choices_are_the_core_runners() -> None:
 
 
 def test_cli_rejects_an_unknown_runner(captured: dict, tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["smoovie", "--hdf-dir", str(tmp_path), "--output", str(tmp_path / "o"), "--runner", "gnuradio"]
-    )
+    result = runner.invoke(app, ["--hdf-dir", str(tmp_path), "--output", str(tmp_path / "o"), "--runner", "gnuradio"])
     assert result.exit_code != 0 and captured == {}
 
 
 def test_cli_options_match_the_core_signature() -> None:
     """Every core parameter is reachable from the CLI, and the CLI adds none of its own."""
-    assert list(inspect.signature(cli.smoovie).parameters) == _core_parameters()
+    assert list(inspect.signature(cli.kremetart).parameters) == _core_parameters()

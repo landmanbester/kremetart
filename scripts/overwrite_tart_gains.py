@@ -2,7 +2,7 @@
 
 For each ``vis_*.hdf`` in the directory, solve the acquisition StefCAL gains (beam-weighted, pooled
 over the whole file) and write **phase-only** gains back into the HDF -- unit amplitude for live
-antennas, 0 for the dead one -- so ``kremetart smoovie --correct-gains`` images with our calibration
+antennas, 0 for the dead one -- so ``kremetart --correct-gains`` images with our calibration
 instead of TART's. The amplitudes are discarded because the unit-flux acquisition model leaves them
 unreliable; only the phases are trusted (and the global phase cancels in ``g_p conj(g_q)``).
 

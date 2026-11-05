@@ -16,7 +16,7 @@ belong at the top too.
 
 An import goes inside a function body only for one of these reasons, with a one-line comment naming it:
 
-1. **`cli.py` → `core`**: a command imports its `core` function inside its body so `kremetart --help`
+1. **`cli.py` → `core`**: the command imports its `core` function inside its body so `kremetart --help`
    stays fast.
 2. **GPU-only dependencies in a module with a CPU path**: `cupy` and `holoscan` sit at module top only in
    inherently GPU modules (`operators/`). A module that also runs on NumPy imports them inside the GPU

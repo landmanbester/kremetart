@@ -15,7 +15,7 @@ FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
 # Make the GPU visible when launched under the NVIDIA Container Toolkit. The runtime base
 # already sets these; re-affirmed here as documentation. NB: this image only *uses* the GPU
 # when the container is started with GPU access (`docker/podman run --gpus all`, or
-# `apptainer/singularity --nv`). Without it, smoovie falls back to the (slower) CPU loop runner.
+# `apptainer/singularity --nv`). Without it, kremetart falls back to the (slower) CPU loop runner.
 ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     CUDA_HOME=/usr/local/cuda
@@ -30,7 +30,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 #                          dies with "Failed to find CUDA headers". A few MB -- far leaner than the
 #                          full "-devel" base. cupy locates them via CUDA_HOME (set below).
 #   libgomp1            -> OpenMP runtime that the numpy/scipy wheels dlopen.
-#   ca-certificates     -> TLS for pip and for the TART catalogue API (smoovie --overlay-catalog).
+#   ca-certificates     -> TLS for pip and for the TART catalogue API (kremetart --overlay-catalog).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         cuda-cudart-dev-13-0 \

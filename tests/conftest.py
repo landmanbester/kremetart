@@ -77,7 +77,7 @@ def hdf_paths(data_dir: Path) -> list[Path]:
 def hdf_dir(hdf_paths: list[Path]) -> Path:
     """The ``tests/data`` directory, guaranteed to contain HDFs (else the test skips).
 
-    For ``smoovie(hdf_dir=...)`` calls, which glob the directory themselves.
+    For ``kremetart(hdf_dir=...)`` calls, which glob the directory themselves.
     """
     return hdf_paths[0].parent
 
@@ -87,7 +87,7 @@ def catalog_cache(data_dir: Path) -> str:
     """Path to the bundled satellite-catalogue cache zarr; skips if absent.
 
     Pass this as ``cache_path`` (:func:`kremetart.utils.satellites.satellite_tracks`) or
-    ``catalog_cache`` (:func:`kremetart.core.smoovie.smoovie`) so tests reuse the pre-downloaded
+    ``catalog_cache`` (:func:`kremetart.core.kremetart.kremetart`) so tests reuse the pre-downloaded
     catalogue instead of querying the TART API.
     """
     cat = data_dir / "catalog.zarr"

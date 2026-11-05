@@ -71,7 +71,7 @@ class SnapshotImager:
         ground_plane_diameter: float = GROUND_PLANE_DIAMETER,
         xp: ModuleType = np,
     ) -> SnapshotImager:
-        """The standard chain with default solver settings (matching the ``smoovie`` pipeline)."""
+        """The standard chain with default solver settings (matching the ``kremetart`` command)."""
         grid = SkyGrid.build(
             nside, nest=nest, apply_beam=apply_beam, ground_plane_diameter=ground_plane_diameter, xp=xp
         )

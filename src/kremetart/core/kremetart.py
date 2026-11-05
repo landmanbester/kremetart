@@ -35,7 +35,7 @@ def _wait_for_interrupt() -> None:
         pass
 
 
-def smoovie(
+def kremetart(
     hdf_dir: Path,
     output: Path,
     nside: int = 128,

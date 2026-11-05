@@ -6,8 +6,8 @@ Read this when editing `src/kremetart/**`.
 
 | Package | Holds | Imports from |
 |---|---|---|
-| `cli.py` | The Typer app: one thin function per command, forwarding its options to `core`. | `core` (inside the command, so `kremetart --help` stays fast). |
-| `core/` | Host orchestration of a command (validation, data preparation, catalog, web server, profiling) and the **runners** that drive the stages (see Runners). | `imaging`, `utils`; `operators` from `holoscan_runner.py` only. |
+| `cli.py` | The Typer app: the single `kremetart` command, a thin function forwarding its options to `core`. | `core` (inside the command, so `kremetart --help` stays fast). |
+| `core/` | Host orchestration of the command in `core/kremetart.py` (validation, data preparation, catalog, web server, profiling) and the **runners** that drive the stages (see Runners). | `imaging`, `utils`; `operators` from `holoscan_runner.py` only. |
 | `blocks/` | CyberEther **adapters**: one class per Python block (a stage, the snapshot source, the map-store sink), built from a JSON config inside the CyberEther process. | `imaging`, `utils`. |
 | `operators/` | Holoscan **adapters** (receive arrays from ports, build a `Snapshot`, call a stage, emit arrays), plus the zarr reader/writer and the web sink. | `imaging`, `utils`. |
 | `imaging/` | The `Snapshot`, the `SkyGrid`, the four **stages** (dirty imager, Tikhonov solver, L1 solver, IWP filter) and the `SnapshotImager` that chains them. All `xp`-injectable. | `opt`, `utils`. |
@@ -71,10 +71,11 @@ Block stubs can only reach the adapters by import, so a change to a `blocks/` ad
 the runner; a change to a block's ports or config needs both (`tests/test_cyberether_runner.py` checks the
 wiring without CyberEther).
 
-## Commands
+## The command
 
-`cli.smoovie` and `core.smoovie.smoovie` take exactly the same parameters (`tests/test_cli.py` checks
-this), so a user-facing knob goes on both. Environment differences such as GPU vs CPU are detected
+The package installs one command, `kremetart`, with no subcommands: `kremetart --hdf-dir … --output …`.
+`cli.kremetart` and `core.kremetart.kremetart` take exactly the same parameters (`tests/test_cli.py` checks
+this), so a user-facing knob goes on both. New behaviour is an option on this command, not a new command. Environment differences such as GPU vs CPU are detected
 inside the code (`core.runner.cuda_available`); tests force a path by monkeypatching the detector.
 
 ## Packaging and releases
@@ -89,7 +90,9 @@ inside the code (`core.runner.cuda_available`); tests force a path by monkeypatc
   (`arcae`, `xarray-ms`) are test-only for the same reason.
 - StefCAL (`utils/stefcal.py`, the sky model in `utils/skymodel.py`, `opt.fista`'s operator form, and
   `utils/satellites.frame_source_directions`) has no command calling it yet: it is kept, and tested
-  directly, for on-the-fly calibration. `scripts/` holds the host-side checks of it against TART's gains.
+  directly, for on-the-fly calibration.
+- Helper scripts (the StefCAL checks against TART's gains, regulariser comparisons, one-off studies) are not
+  part of the package: they live in `scripts/`, import `kremetart`, and are run with `python scripts/<name>.py`.
 - `Dockerfile` builds the runtime image; `.github/workflows/publish-container.yml` builds it natively for
   linux/amd64 and linux/arm64 (the DGX Spark) and pushes one multi-arch tag to
   `ghcr.io/landmanbester/kremetart` (version tag on release tags, `latest` on `main`, per-branch on PRs).

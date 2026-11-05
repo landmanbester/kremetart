@@ -1,4 +1,4 @@
-"""Command-line interface for kremetart."""
+"""Command-line interface for kremetart: a single command, ``kremetart``."""
 
 from enum import Enum
 from pathlib import Path
@@ -17,20 +17,11 @@ class RunnerName(str, Enum):
     cyberether_gui = "cyberether-gui"
 
 
-app = typer.Typer(
-    name="kremetart",
-    help="Kalman Real-time Evidence Monitoring Extractor for TART",
-    no_args_is_help=True,
-)
+app = typer.Typer(name="kremetart")
 
 
-@app.callback()
-def callback() -> None:
-    """Kalman Real-time Evidence Monitoring Extractor for TART"""
-
-
-@app.command()
-def smoovie(
+@app.command(no_args_is_help=True)
+def kremetart(
     hdf_dir: Annotated[Path, typer.Option(help="Directory of input TART HDF snapshots.")],
     output: Annotated[Path, typer.Option(help="Output HEALPix (TIME, PIX) zarr.")],
     nside: Annotated[int, typer.Option(help="HEALPix nside resolution.")] = 128,
@@ -100,11 +91,14 @@ def smoovie(
         ),
     ] = RunnerName.auto,
 ) -> None:
-    """Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer."""
-    # Deferred so that `kremetart --help` stays fast: smoovie pulls in xarray, astropy and the stages.
-    from kremetart.core.smoovie import smoovie as run_smoovie
+    """Kalman Real-time Evidence Monitoring Extractor for TART.
 
-    run_smoovie(
+    Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
+    """
+    # Deferred so that `kremetart --help` stays fast: the command pulls in xarray, astropy and the stages.
+    from kremetart.core.kremetart import kremetart as run_kremetart
+
+    run_kremetart(
         hdf_dir=hdf_dir,
         output=output,
         nside=nside,

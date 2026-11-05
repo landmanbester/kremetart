@@ -29,13 +29,12 @@ kremetart needs Python 3.11 or later and runs on Linux, macOS (Apple Silicon) an
 
 ```bash
 kremetart --help
-kremetart smoovie --help
 ```
 
 If you have a directory containing pre-downloaded `.hdf` files you should be able to run
 
 ```bash
-kremetart smoovie --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
+kremetart --hdf-dir path/to/hdf/dir --nside 64 --correct-gains --overlay-catalog --open-browser --output /tmp/test.zarr
 ```
 
 Point your browser to `http://localhost:8080/` to watch the output stream. This fetches and overlays the satellite catalog on the fly which might drop frames.
@@ -66,14 +65,14 @@ uv sync --group test
 Then download the data by running a test (set `KREMETART_OFFLINE=1` to skip the download):
 
 ```bash
-uv run pytest tests/test_smoovie.py -q
+uv run pytest tests/test_kremetart.py -q
 ```
 
-The bundle holds nine ~1-minute HDF files of ~1-second snapshots, i.e. 540 snapshots. `smoovie` images
+The bundle holds nine ~1-minute HDF files of ~1-second snapshots, i.e. 540 snapshots. `kremetart` images
 each one and streams the maps to the live viewer:
 
 ```bash
-uv run kremetart smoovie --hdf-dir tests/data --output /tmp/test.zarr --nside 64 --correct-gains --overlay-catalog --catalog-cache tests/data/catalog.zarr --open-browser
+uv run kremetart --hdf-dir tests/data --output /tmp/test.zarr --nside 64 --correct-gains --overlay-catalog --catalog-cache tests/data/catalog.zarr --open-browser
 ```
 
 The browser should open on its own; if not, browse to `http://localhost:8080/`.
@@ -91,7 +90,7 @@ saved it:
 ```bash
 chmod +x ~/Downloads/CyberEther-linux-x64-cuda.AppImage
 export KREMETART_CYBERETHER=~/Downloads/CyberEther-linux-x64-cuda.AppImage
-kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
+kremetart --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --runner cyberether
 ```
 
 kremetart writes the flowgraph, starts CyberEther on its own Python (so the blocks import kremetart from
@@ -102,7 +101,7 @@ live web viewer works as with any other runner.
 CyberEther window instead of headless, so you can watch the blocks execute:
 
 ```bash
-kremetart smoovie --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
+kremetart --hdf-dir path/to/hdf/dir --output /tmp/test.zarr --nside 32 --l2 0.01 --runner cyberether-gui
 ```
 
 The window shows a note explaining the graph and one Python block per stage, left to right: `source`
@@ -110,7 +109,7 @@ The window shows a note explaining the graph and one Python block per stage, lef
 `iwp` (the Kalman filter) and `sink` (the map store); pin tooltips show each tensor's attributes. Each
 block's code is a short stub that builds the stage adapter from `kremetart.blocks`; the maths itself is in
 `kremetart.imaging`. Editing the stub in the window reloads that block. When every snapshot is imaged,
-kremetart prints `close the CyberEther window to finish`; close the window to let `smoovie` write its
+kremetart prints `close the CyberEther window to finish`; close the window to let `kremetart` write its
 profile and, when serving, freeze the web viewer.
 
 Troubleshooting:
@@ -138,7 +137,7 @@ docker run --rm --gpus all --ulimit stack=33554432 \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$PWD/tests/data:/data:ro" -v "$PWD/out:/out" \
   ghcr.io/landmanbester/kremetart:latest \
-  kremetart smoovie --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
+  kremetart --hdf-dir /data --output /out/tart.zarr --nside 64 --correct-gains --no-serve
 ```
 
 - **`--gpus all`**: expose the host GPU. Without it the run prints `imaging on CPU (NumPy loop)`.
@@ -155,5 +154,5 @@ Host networking also gives `--overlay-catalog` the access it needs to the TART c
 GPU flag is `--nv` and the host network is the default:
 
 ```bash
-apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:latest kremetart smoovie --hdf-dir … --output …
+apptainer exec --nv docker://ghcr.io/landmanbester/kremetart:latest kremetart --hdf-dir … --output …
 ```
