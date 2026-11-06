@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-06
+
+### CI
+
+- Move the macOS job to macos-15; GitHub retired macos-14
+
+### Documentation
+
+- Show group options, argument shape and README reference links
+- Sync the docs generators with the autodocs skill
+- Say the smooth map's unit follows the map it smooths
+- Link the Read the Docs site from the README and package metadata
+- Tabulate options and glossary; calmer colours; keep agent records out
+- Render the command options as tables
+- Generate Sphinx reference docs from docstrings, help strings and records
+- Name releases after African trees; drop the closed #47 reference
+
+
 ## [0.1.0] - 2026-11-05
 
 ### Added
@@ -262,6 +280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add pyproj truth-geometry helpers for accuracy verification
 
 
+[0.1.1]: https://github.com/landmanbester/kremetart/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/landmanbester/kremetart/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/landmanbester/kremetart/releases/tag/v0.0.1
 
