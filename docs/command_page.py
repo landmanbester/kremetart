@@ -78,26 +78,35 @@ def _paragraphs(command: Any, env_var: re.Pattern[str]) -> tuple[list[str], list
     return [p for p in paragraphs if not env_var.match(p)], environment
 
 
-def _command(command: Any, path: str, level: int, env_var: re.Pattern[str]) -> list[str]:
-    """One command's section: intro, usage, arguments, required options, options, environment."""
-    intro, environment = _paragraphs(command, env_var)
+def _usage_argument(param: Any) -> str:
+    """``<name>`` for a required argument, ``[<name>]`` for an optional one, ``...`` when it repeats."""
+    name = f"<{param.name}>" + ("..." if param.nargs == -1 or param.nargs > 1 else "")
+    return name if param.required else f"[{name}]"
+
+
+def _parameters(command: Any, path: str, level: int, environment: list[tuple[str, str]], tail: str = "") -> list[str]:
+    """Usage, then tables of arguments, required options, options and environment variables.
+
+    ``tail`` ends the usage line (a group's ``COMMAND [ARGS]...``).
+    """
     params = [p for p in command.params if p.name not in HIDDEN and not getattr(p, "hidden", False)]
     arguments = [p for p in params if p.param_type_name == "argument"]
     options = [p for p in params if p.param_type_name == "option"]
     required = [p for p in options if p.required]
     optional = [p for p in options if not p.required]
 
-    hashes = "#" * level
     sub = "#" * (level + 1)
-    lines = [f"{hashes} `{path}`", "", *(line for p in intro for line in (p, ""))]
-    usage = [path, *(f"<{p.name}>" for p in arguments), *(f"{p.opts[0]} <{p.name}>" for p in required)]
+    usage = [path, *(f"{p.opts[0]} <{p.name}>" for p in required)]
     if optional:
         usage.append("[OPTIONS]")
-    lines += [f"{sub} Usage", "", "```console", " ".join(usage), "```", ""]
+    usage += [_usage_argument(p) for p in arguments]
+    if tail:
+        usage.append(tail)
+    lines = [f"{sub} Usage", "", "```console", " ".join(usage), "```", ""]
 
     if arguments:
-        rows = [(f"`{p.name}`", _metavar(p), _cell(getattr(p, "help", None) or "")) for p in arguments]
-        lines += [f"{sub} Arguments", "", *_table(("Argument", "Type", "Description"), rows)]
+        rows = [(f"`{p.name}`", _metavar(p), _default(p), _cell(getattr(p, "help", None) or "")) for p in arguments]
+        lines += [f"{sub} Arguments", "", *_table(("Argument", "Type", "Default", "Description"), rows)]
     if required:
         rows = [(_option(p), _cell(p.help or "")) for p in required]
         lines += [f"{sub} Required", "", *_table(("Option", "Description"), rows)]
@@ -110,18 +119,25 @@ def _command(command: Any, path: str, level: int, env_var: re.Pattern[str]) -> l
     return lines
 
 
+def _command(command: Any, path: str, level: int, env_var: re.Pattern[str]) -> list[str]:
+    """One command's section: intro, then its usage and parameter tables."""
+    intro, environment = _paragraphs(command, env_var)
+    lines = [f"{'#' * level} `{path}`", "", *(line for p in intro for line in (p, ""))]
+    return lines + _parameters(command, path, level, environment)
+
+
 def _group(group: Any, path: str, level: int, env_var: re.Pattern[str]) -> list[str]:
-    """A group's intro, a table of its commands, then one section per command (recursing into subgroups)."""
+    """A group's intro, its commands, its own usage and options, then one section per command.
+
+    The group's options (from its callback) go before the subcommands: they come before the command name.
+    """
     intro, environment = _paragraphs(group, env_var)
     ctx = group.context_class(group, info_name=path)
     names = [n for n in group.list_commands(ctx) if not group.get_command(ctx, n).hidden]
-    hashes = "#" * level
-    lines = [f"{hashes} `{path}`", "", *(line for p in intro for line in (p, ""))]
+    lines = [f"{'#' * level} `{path}`", "", *(line for p in intro for line in (p, ""))]
     rows = [(f"`{path} {n}`", _cell(group.get_command(ctx, n).get_short_help_str(limit=200))) for n in names]
     lines += _table(("Command", "Description"), rows)
-    if environment:
-        rows_env = [(f"`{name}`", _cell(text)) for name, text in environment]
-        lines += [f"{'#' * (level + 1)} Environment", "", *_table(("Variable", "Description"), rows_env)]
+    lines += _parameters(group, path, level, environment, tail="COMMAND [ARGS]...")
     for name in names:
         child = group.get_command(ctx, name)
         render_child = _group if _is_group(child) else _command
