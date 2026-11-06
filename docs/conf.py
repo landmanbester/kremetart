@@ -15,8 +15,12 @@ DOCS = Path(__file__).parent
 sys.path.insert(0, str(DOCS))
 import command_page  # noqa: E402  (lives next to this file)
 import glossary_page  # noqa: E402
+import readme_page  # noqa: E402
 
-command_page.write(DOCS / "reference" / "command.md")
+from kremetart.cli import app  # noqa: E402
+
+readme_page.write(DOCS.parent / "README.md", DOCS / "readme.md", "https://github.com/landmanbester/kremetart")
+command_page.write(app, "kremetart", DOCS / "reference" / "command.md", env_prefix="KREMETART_")
 glossary_page.write(DOCS.parent / "GLOSSARY.md", DOCS / "glossary.md")
 
 project = "kremetart"
@@ -39,7 +43,7 @@ source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 root_doc = "index"
 # The docs are a quick read for people. The ADRs, design notes and agent notes under docs/ are the
 # agents' record and stay out of the site.
-exclude_patterns = ["_build", "adr", "agents", "design", "tex"]
+exclude_patterns = ["_build", "readme.md", "adr", "agents", "design", "tex"]
 templates_path = ["_templates"]
 
 myst_enable_extensions = ["dollarmath", "colon_fence"]

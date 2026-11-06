@@ -55,8 +55,8 @@ uv run ruff format . && uv run ruff check . --fix
 The pre-commit hook and CI enforce the same configuration.
 
 The documentation (Sphinx, hosted on Read the Docs) is a quick read for people, generated, never written:
-the home page from `README.md`, the command page from the Typer help strings (as tables, via
-`docs/command_page.py`), the Python reference from docstrings (Parameters, Raises and Returns as tables,
+the home page from `README.md` (repo-relative links pointed at GitHub, via `docs/readme_page.py`), the
+command page from the Typer help strings (as tables, via `docs/command_page.py`), the Python reference from docstrings (Parameters, Raises and Returns as tables,
 via `docs/field_tables.py`), and the glossary from `GLOSSARY.md` (one table per section, without the
 `_Avoid_` lines, via `docs/glossary_page.py`). The ADRs, design notes and `docs/agents/` are the agents'
 record and stay out of the site. Pages under `docs/` only arrange the sources. Build it after changing a
