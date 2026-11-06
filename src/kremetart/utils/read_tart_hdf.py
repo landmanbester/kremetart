@@ -1,3 +1,5 @@
+"""Prepare a TART HDF sequence into one imaging-ready snapshot zarr, the input every runner reads."""
+
 from __future__ import annotations
 
 import shutil

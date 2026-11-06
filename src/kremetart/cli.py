@@ -94,6 +94,12 @@ def kremetart(
     """Kalman Real-time Evidence Monitoring Extractor for TART.
 
     Image a TART HDF sequence into HEALPix maps and stream them to a live web viewer.
+
+    Holoscan needs a 32 MiB stack on GPU runs: run `ulimit -s 32768` first.
+
+    KREMETART_CYBERETHER: The CyberEther executable for the cyberether runners (default: `cyberether` on PATH).
+
+    KREMETART_CYBERETHER_STALL_SECONDS: Ends a headless CyberEther run that writes no snapshot for this long (300).
     """
     # Deferred so that `kremetart --help` stays fast: the command pulls in xarray, astropy and the stages.
     from kremetart.core.kremetart import kremetart as run_kremetart

@@ -40,6 +40,10 @@ An import goes inside a function body only for one of these reasons, with a one-
   `cli.py` only.
 - Google-style docstrings (Args, Returns, Raises), concise. Inline comments only where intent is not
   obvious.
+- Docstrings and CLI help strings are the published reference (`docs/`, see `testing-and-ci.md` §4): every
+  public module, class and function in `imaging`, `opt`, `core` and `utils` has one, written for a user of
+  that interface. Facts a user needs (the output format, an environment variable) go in the docstring or
+  help string that owns them, never in a hand-written docs page.
 
 ## 5. Private vs shared names
 

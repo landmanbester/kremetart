@@ -1,0 +1,23 @@
+# Read the Docs build: https://docs.readthedocs.com/platform/stable/config-file/v2.html
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+  jobs:
+    pre_create_environment:
+      - asdf plugin add uv
+      - asdf install uv latest
+      - asdf global uv latest
+    create_environment:
+      - uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
+    install:
+      # The CUDA stack is Linux-only and about 1 GB; conf.py mocks it for autodoc.
+      - >-
+        UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --frozen --no-default-groups --group docs
+        --no-install-package holoscan-cu13 --no-install-package cupy-cuda13x --no-install-package nvidia-cublas
+
+sphinx:
+  configuration: docs/conf.py
+  fail_on_warning: true

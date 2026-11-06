@@ -1,4 +1,5 @@
-"""Utils for kremetart."""
+"""Host-side helpers: sky geometry, HDF preparation, calibration and gains, satellites, the map store and
+the live viewer."""
 
 
 def partition_datatree(dt):

@@ -43,6 +43,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/landmanbester/kremetart"
+Documentation = "https://kremetart.readthedocs.io"
 Repository = "https://github.com/landmanbester/kremetart"
 "Bug Tracker" = "https://github.com/landmanbester/kremetart/issues"
 
@@ -88,6 +89,12 @@ dev = [
     "tbump>=6.11.0",
     "pre-commit>=4.0.0",
     "ipdb",
+]
+docs = [
+    "furo>=2025.7",
+    "myst-parser>=4.0",
+    "sphinx>=8.1",
+    "sphinx-llms-txt>=0.7",
 ]
 test = [
     "pytest>=8.0.0",

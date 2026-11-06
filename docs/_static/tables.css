@@ -1,0 +1,8 @@
+/* Tables span the text column and start at its left edge, so short ones do not float in the middle. */
+article table.docutils {
+  width: 100%;
+  margin-left: 0;
+}
+article table.docutils th {
+  text-align: left;
+}

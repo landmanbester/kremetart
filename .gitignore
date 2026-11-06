@@ -57,3 +57,7 @@ Thumbs.db
 *.fdb_latexmk
 *.fls
 *.synctex.gz
+docs/_build/
+docs/reference/_generated/
+docs/reference/command.md
+docs/glossary.md

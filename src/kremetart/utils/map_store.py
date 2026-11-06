@@ -1,10 +1,32 @@
 """The durable map store: a ``(TIME, PIX)`` zarr with one float32 variable per map name.
 
-Host-only (NumPy, xarray, dask). Every runner writes through these two functions, so the output format
-is defined once: :func:`create_map_store` writes a lazy scaffold sized for the whole run, then
-:func:`write_maps` fills one snapshot's row, located by matching its time against the ``TIME``
-coordinate.
+This is the file ``kremetart --output`` writes. Open it with ``xarray.open_zarr(path)``.
+
+============  ==================================================================================
+Coordinate    Meaning
+============  ==================================================================================
+``TIME``      Snapshot time in unix seconds (UTC), one row per snapshot.
+``PIX``       HEALPix pixel index: NESTED ordering on an equatorial (ICRS) grid of ``12 * nside**2``
+              pixels.
+============  ==================================================================================
+
+Each map is a float32 ``(TIME, PIX)`` variable:
+
+============  ==============================  ===================================================
+Variable      Unit                            Contents
+============  ==============================  ===================================================
+``dirty``     Jy/beam                         The dirty map.
+``tikhonov``  Jy/pixel                        The Tikhonov map; only with ``--l2``.
+``l1``        Jy/pixel                        The L1 map; only with ``--l1``.
+``filtered``  as the map it smooths           The IWP filter's smooth map of the Tikhonov maps, or
+                                              of the dirty maps without ``--l2``.
+``znorm``     dimensionless                   The normalised innovation: the transient statistic.
+============  ==============================  ===================================================
 """
+
+# Host-only (NumPy, xarray, dask). Every runner writes through these two functions, so the output format is
+# defined once: create_map_store writes a lazy scaffold sized for the whole run, then write_maps fills one
+# snapshot's row, located by matching its time against the TIME coordinate.
 
 from __future__ import annotations
 
